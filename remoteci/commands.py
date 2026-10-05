@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .service import ChatUser, RemoteCiService, ServiceError
+from .swaps import run_swap_command
 
 COMMAND_NAMES = ("rci", "remoteci", "课表")
 
@@ -27,6 +28,11 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 提醒 次日 下课   次日日程在自己最后一节课下课时推送
 /rci 提醒 课前 15   课前提前 15 分钟提醒
 /rci 提醒 重置   恢复管理员的统一设置
+━ 换课申请（老师/班主任）━
+/rci 换课 待办 | 我的   查看发给我的 / 我发起的换课申请
+/rci 换课 通过|拒绝 <编号> [备注]
+/rci 换课 撤回 <编号>   撤回别人对我的强制换课
+发起换课请在 RemoteCI WebUI 或手机 App 的“换课”页；有新申请时会主动私聊提醒。
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
 /rci 老师来了 <班级名>
@@ -47,6 +53,7 @@ SUBCOMMANDS = {
     "notify": "notify", "通知": "notify",
     "coming": "coming", "老师来了": "coming",
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
+    "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
 }
 
 REMIND_ITEMS = {
@@ -123,6 +130,8 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
             if len(args) < 2:
                 return "用法：/rci 通知 <班级名> <内容>"
             return await service.notify(user, args[0], " ".join(args[1:]))
+        if action == "swap":
+            return await run_swap_command(service, user, args)
         if action == "coming":
             return await service.send_command(user, " ".join(args) or None, 8, None, confirmed=True)
     except ServiceError as ex:

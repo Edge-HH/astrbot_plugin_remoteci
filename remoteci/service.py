@@ -20,6 +20,7 @@ from . import schedule as sch
 from .client import RemoteCiClient, RemoteCiError, normalize_base_url
 from .holidays import HolidayCalendar
 from .reminders import digest_due, personal_due, tomorrow_trigger
+from .swaps import SwapInbox
 from .store import (DEFAULT_SESSION_PUSH, REMINDER_KEYS, ROLE_AUTO, ROLE_CLASS_GROUP, ROLE_HEAD, ROLE_NONE,
                     ROLE_TEACHER, SESSION_ROLES, Store)
 
@@ -64,6 +65,8 @@ class RemoteCiService:
         self._task: asyncio.Task | None = None
         self._last_poll: dict[str, float] = {}
         self.last_tick_error = ""
+        # 换课申请个人通知：独立于节假日与推送角色，有“老师主动换课”权限的绑定都会收到。
+        self.swaps = SwapInbox(self)
 
     # ---------- 生命周期 ----------
 
@@ -518,6 +521,8 @@ class RemoteCiService:
     async def tick(self) -> None:
         if self.store.state.get("paused"):
             return
+        # 换课申请需要及时处理，节假日也照常提醒。
+        swap_dirty = await self.swaps.poll()
         await self.refresh_holidays()
         now = self.now()
         h_today, h_tomorrow, _ = self.holiday_flags()
@@ -535,7 +540,7 @@ class RemoteCiService:
             except RemoteCiError as ex:
                 if ex.status not in (401, 404):
                     log.warning("RemoteCI 推送 %s 失败：%s", umo, ex)
-        if dirty:
+        if dirty or swap_dirty:
             self.store.prune_sent()
             await self.store.save()
 

@@ -228,6 +228,38 @@ class RemoteCiPlugin(Star):
         """
         return await self._tool(event, lambda user: self.service.query_state(user, class_name or None))
 
+    @filter.llm_tool(name="remoteci_swap_requests")
+    async def tool_swap_requests(self, event: AstrMessageEvent, box: str = "incoming"):
+        """查看换课申请：incoming 为发给我的（待我审批、或被强制换走可撤回的），outgoing 为我发起的。回答时给出申请人、两节课、理由和编号，再问用户是否通过。发起换课需要在 RemoteCI WebUI 或手机 App 的“换课”页完成。
+
+        Args:
+            box(string): incoming 或 outgoing
+        """
+        from .remoteci.swaps import list_requests
+
+        async def run(user):
+            binding = self.service.require_binding(user)
+            return await list_requests(self.service, binding, "outgoing" if box == "outgoing" else "incoming")
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_swap_decide")
+    async def tool_swap_decide(self, event: AstrMessageEvent, request_id: str, action: str, note: str = ""):
+        """处理换课申请。通过或撤回前先向用户复述两节课并确认。
+
+        Args:
+            request_id(string): 换课申请编号（8 位短编号或完整 ID）
+            action(string): approve 通过、reject 拒绝、revoke 撤回别人对我的强制换课、cancel 撤销我发起的待审批申请
+            note(string): 通过或拒绝时的备注，可留空
+        """
+        from .remoteci.swaps import decide
+
+        async def run(user):
+            if action not in ("approve", "reject", "revoke", "cancel"):
+                return "action 只能是 approve、reject、revoke 或 cancel。"
+            binding = self.service.require_binding(user)
+            return await decide(self.service, binding, action, request_id, note)
+        return await self._tool(event, run)
+
     @filter.llm_tool(name="remoteci_get_reminders")
     async def tool_get_reminders(self, event: AstrMessageEvent):
         """查看当前用户的主动提醒设置（当日日程、次日日程、课前提醒、换课提醒、班主任班级换课提醒）。
@@ -326,13 +358,14 @@ class RemoteCiPlugin(Star):
 
     @filter.llm_tool(name="remoteci_reference")
     async def tool_reference(self, event: AstrMessageEvent, topic: str = "overview"):
-        """读取 RemoteCI API 使用手册：overview（连接、身份权限、查询、错误码）、control（教室控制命令、换课、广播、扩展插件设置）、admin（班级、分组、账号、成员、配对码、备份、班主任权限）、plugin（本插件的指令与提醒）。
+        """读取 RemoteCI API 使用手册：overview（连接、身份权限、查询、错误码）、control（教室控制命令、换课、广播、扩展插件设置）、admin（班级、分组、账号、成员、配对码、备份、班主任权限）、swaps（换课申请、审批、强制换课与个人通知）、plugin（本插件的指令与提醒）。
 
         Args:
-            topic(string): overview、control、admin 或 plugin
+            topic(string): overview、control、admin、swaps 或 plugin
         """
         files = {"overview": SKILL_DIR / "SKILL.md", "control": SKILL_DIR / "references" / "control.md",
-                 "admin": SKILL_DIR / "references" / "admin.md"}
+                 "admin": SKILL_DIR / "references" / "admin.md",
+                 "swaps": SKILL_DIR / "references" / "swap-requests.md"}
         if topic == "plugin":
             return HELP
         path = files.get(topic, files["overview"])

@@ -3,7 +3,7 @@
 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 插件：把 [RemoteCI](https://github.com/Edge-HH/RemoteCI) 接入 QQ、Telegram、飞书等聊天平台。
 
 > [!WARNING]
-> 开发中。需要 AstrBot ≥ 4.9（插件页面、插件 Web API）。
+> 开发中。需要 AstrBot ≥ 4.26（插件页面与插件 Web API 从该版本开始提供；更早版本只能使用聊天功能）。
 
 ## 功能
 
@@ -20,7 +20,7 @@
   - 老师可以用指令或自然语言开关每一项、修改当日/次日推送时间。
 - **班级群定时课表**：在 WebUI 把群设为“班级群”并显式开启后，按设定时间推送班级课表。
 - **节假日自动暂停**：法定节假日（含调休，数据来自 [holiday-cn](https://github.com/NateScarlet/holiday-cn)）、可选“周末视为假期”、自定义寒暑假区间。
-- **内置 WebUI**（AstrBot 管理面板 → 插件 → RemoteCI → 页面）：查看聊天身份与 RemoteCI 姓名的绑定关系，设置会话角色（老师 / 班主任 / 班级群），统一提醒默认值，节假日，推送记录。风格与 RemoteCI 服务端 WebUI 一致。
+- **内置 WebUI**（AstrBot 管理面板左侧“插件页面” → RemoteCI）：查看聊天身份与 RemoteCI 姓名的绑定关系，设置会话角色（老师 / 班主任 / 班级群），统一提醒默认值，节假日，推送记录。界面沿用 AstrBot 管理面板的设计，深浅色跟随 AstrBot。
 
 ## 指令
 

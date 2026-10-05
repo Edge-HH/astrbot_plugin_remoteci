@@ -109,3 +109,4 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 - 远程终端、文件分发。
 - 修改扩展插件设置，尤其是同时改多个班级。
 - 向一个分组或全校广播。
+- 强制换课（`POST /api/swap-requests` 带 `"force": true`），见 [swap-requests.md](swap-requests.md#强制换课)。
