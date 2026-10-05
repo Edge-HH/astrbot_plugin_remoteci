@@ -1,4 +1,6 @@
-# astrbot_plugin_remoteci
+# RemoteCI AstrbotConnector
+
+插件 ID：`astrbot_plugin_remoteci`
 
 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 插件：把 [RemoteCI](https://github.com/Edge-HH/RemoteCI) 接入 QQ、Telegram、飞书等聊天平台。
 

@@ -123,7 +123,7 @@
         if (!o.official_data) warns.push(alertBox("warn", "尚未获取今年的法定节假日数据", "暂时只按自定义假期判断，可在“节假日”页刷新。"));
         if (o.last_error) warns.push(alertBox("error", "最近一次调度出错", esc(o.last_error)));
 
-        app.innerHTML = `<div class="section">${head("概览", "RemoteCI AstrbotPlugin 的运行状态与最近推送。")}${status}${warns.join("")}
+        app.innerHTML = `<div class="section">${head("概览", "RemoteCI AstrbotConnector 的运行状态与最近推送。")}${status}${warns.join("")}
             ${card("", "", `<div class="stats">
                 <div class="stat"><span>已绑定账号</span><strong>${o.bindings}</strong><small>${o.auth_failed ? `<span class="chip bad">${o.auth_failed} 个凭据失效</span>` : "凭据全部有效"}</small></div>
                 <div class="stat"><span>老师 / 班主任</span><strong>${o.teachers}</strong><small>个人主动提醒</small></div>
