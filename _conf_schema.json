@@ -1,0 +1,26 @@
+{
+  "default_server_url": {
+    "description": "默认 RemoteCI 服务器地址",
+    "type": "string",
+    "hint": "例如 https://remoteci.example.com。填写后用户绑定时可以省略服务器地址。",
+    "default": ""
+  },
+  "timezone": {
+    "description": "学校所在时区",
+    "type": "string",
+    "hint": "IANA 时区名，课表时间按这个时区计算。",
+    "default": "Asia/Shanghai"
+  },
+  "poll_minutes": {
+    "description": "换课检查间隔（分钟）",
+    "type": "int",
+    "hint": "多久比对一次课表来发现换课，最小 1 分钟。",
+    "default": 5
+  },
+  "group_require_at": {
+    "description": "群聊仅在 @ 机器人时处理",
+    "type": "bool",
+    "hint": "开启后，群聊里的 /rci 指令和 RemoteCI 自然语言请求都必须 @ 机器人。",
+    "default": true
+  }
+}

@@ -1,24 +1,463 @@
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
+"""AstrBot × RemoteCI：在聊天里查课表、控制教室、管理 RemoteCI，并给老师主动推送日程。
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
-    def __init__(self, context: Context):
+AstrBot 相关的胶水代码都在这里：指令、LLM 工具（自然语言）、群聊 @ 判定、主动消息、插件页面 Web API。
+业务逻辑见 remoteci/ 目录。
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import astrbot.api.message_components as Comp
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.provider import ProviderRequest
+from astrbot.api.star import Context, Star, register
+
+from .remoteci.client import RemoteCiError
+from .remoteci.commands import HELP, run_command
+from .remoteci.service import ROLE_NAMES, ChatUser, RemoteCiService, ServiceError
+
+try:  # AstrBot 新版插件页面 Web API（FastAPI）
+    from astrbot.api.web import error_response, json_response
+    from astrbot.api.web import request as web_request
+    _NEW_WEB = True
+except ImportError:  # 旧版 Dashboard（Quart）
+    from quart import jsonify
+    from quart import request as web_request
+    _NEW_WEB = False
+
+PLUGIN = "astrbot_plugin_remoteci"
+SKILL_DIR = Path(__file__).parent / "remoteci" / "skill"
+QQ_OFFICIAL = {"qq_official", "qq_official_webhook"}
+
+
+def _data_dir() -> Path:
+    try:
+        from astrbot.api.star import StarTools
+        return Path(StarTools.get_data_dir(PLUGIN))
+    except Exception:  # noqa: BLE001 - 兼容没有 StarTools 的旧版本
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+        return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN
+
+
+@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.0.0")
+class RemoteCiPlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
+        self.config = config or {}
+        self.service = RemoteCiService(_data_dir(), send=self._send, config=dict(self.config))
+        self._register_web()
 
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
-
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+        self.service.start()
 
     async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        await self.service.stop()
+
+    # ---------- 公共 ----------
+
+    async def _send(self, umo: str, text: str) -> bool:
+        return bool(await self.context.send_message(umo, MessageChain().message(text)))
+
+    def _user(self, event: AstrMessageEvent) -> ChatUser:
+        umo = event.unified_msg_origin
+        platform = umo.split(":", 1)[0] if umo else event.get_platform_name()
+        sender_id = str(event.get_sender_id())
+        return ChatUser(
+            user_key=f"{platform}:{sender_id}", platform=platform, sender_id=sender_id,
+            sender_name=event.get_sender_name() or sender_id, umo=umo,
+            is_private=event.is_private_chat(), group_name=str(event.get_group_id() or ""),
+        )
+
+    def _addressed(self, event: AstrMessageEvent) -> bool:
+        """私聊总是处理；群聊只在 @ 机器人时处理。"""
+        if event.is_private_chat() or not self.config.get("group_require_at", True):
+            return True
+        self_id = str(event.get_self_id())
+        for comp in event.get_messages():
+            if isinstance(comp, Comp.At) and str(getattr(comp, "qq", "")) == self_id:
+                return True
+        # QQ 官方机器人只会收到 @ 它的群消息，且消息链里不一定保留 At 段。
+        return event.get_platform_name() in QQ_OFFICIAL and bool(getattr(event, "is_at_or_wake_command", False))
+
+    async def _remember(self, event: AstrMessageEvent, user: ChatUser) -> None:
+        sessions = self.service.store.sessions
+        known = event.unified_msg_origin in sessions
+        if user.is_private:
+            name = user.sender_name
+        else:
+            group = event.get_group_id()
+            old = sessions.get(event.unified_msg_origin, {}).get("name")
+            name = old if old and old != f"群 {group}" else f"群 {group}"
+        self.service.store.touch_session(event.unified_msg_origin, kind="private" if user.is_private else "group",
+                                         name=name, platform=user.platform,
+                                         user_key=user.user_key if user.is_private else None)
+        binding = self.service.store.binding_for(user.user_key)
+        if binding and user.is_private and binding.get("umo") != user.umo:
+            binding["umo"] = user.umo
+            known = False
+        if not known:
+            await self.service.store.save()
+
+    # ---------- 指令 ----------
+
+    @filter.command("rci", alias={"remoteci", "课表"})
+    async def rci(self, event: AstrMessageEvent):
+        """RemoteCI：查课表、教室控制、老师日程提醒。发送 /rci 帮助 查看用法"""
+        if not self._addressed(event):
+            return
+        user = self._user(event)
+        await self._remember(event, user)
+        try:
+            text = await run_command(self.service, user, event.message_str)
+        except RemoteCiError as ex:
+            text = f"RemoteCI 请求失败：{ex}"
+        except Exception as ex:  # noqa: BLE001
+            logger.exception("RemoteCI 指令出错")
+            text = f"RemoteCI 插件出错：{ex}"
+        yield event.plain_result(text)
+        event.stop_event()
+
+    # ---------- 自然语言（LLM 工具） ----------
+
+    @filter.on_llm_request()
+    async def inject_context(self, event: AstrMessageEvent, req: ProviderRequest):
+        """告诉模型当前用户的 RemoteCI 连接状态，便于自然语言调用工具。"""
+        try:
+            user = self._user(event)
+            binding = self.service.store.binding_for(user.user_key)
+        except Exception:  # noqa: BLE001
+            return
+        if binding:
+            p = binding.get("profile") or {}
+            req.system_prompt = (req.system_prompt or "") + (
+                f"\n[RemoteCI] 当前用户已连接 RemoteCI 账号“{p.get('displayName')}”。"
+                "涉及课表、日程、下节课、班级、教室控制、提醒设置或 RemoteCI 管理时，使用 remoteci_ 开头的工具；"
+                "需要接口细节时先调用 remoteci_reference。")
+        else:
+            req.system_prompt = (req.system_prompt or "") + (
+                "\n[RemoteCI] 当前用户尚未连接 RemoteCI。若用户想查课表或使用 RemoteCI，"
+                "引导其私聊提供服务器地址和 API Key（或用户名密码），然后调用 remoteci_connect。")
+
+    async def _tool(self, event: AstrMessageEvent, fn) -> str:
+        if not self._addressed(event):
+            return "群聊中需要 @机器人 才能处理 RemoteCI 请求。"
+        user = self._user(event)
+        await self._remember(event, user)
+        try:
+            return await fn(user)
+        except ServiceError as ex:
+            return str(ex)
+        except RemoteCiError as ex:
+            return f"RemoteCI 请求失败：{ex}"
+
+    @filter.llm_tool(name="remoteci_connect")
+    async def tool_connect(self, event: AstrMessageEvent, server_url: str = "", api_key: str = "",
+                           username: str = "", password: str = ""):
+        """把当前聊天用户连接（绑定）到其 RemoteCI 账号。提供 api_key，或者 username+password 之一。只能在私聊中使用；回复中不要复述密码或密钥。
+
+        Args:
+            server_url(string): RemoteCI 服务器地址，如 https://remoteci.example.com；管理员配置了默认地址时可留空
+            api_key(string): 以 rci_ 开头的 API Key
+            username(string): RemoteCI 用户名
+            password(string): RemoteCI 密码
+        """
+        async def run(user: ChatUser):
+            if not user.is_private:
+                return "为保护账号安全，请让用户私聊机器人完成绑定，并撤回群里的密码或密钥。"
+            if api_key:
+                return await self.service.bind_api_key(user, api_key, server_url)
+            if username and password:
+                return await self.service.bind_password(user, username, password, server_url)
+            return "需要 API Key，或用户名和密码。"
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_disconnect")
+    async def tool_disconnect(self, event: AstrMessageEvent):
+        """解除当前用户与 RemoteCI 账号的绑定。
+
+        Args:
+        """
+        return await self._tool(event, self.service.unbind)
+
+    @filter.llm_tool(name="remoteci_whoami")
+    async def tool_whoami(self, event: AstrMessageEvent):
+        """查看当前用户绑定的 RemoteCI 账号、身份、可访问班级和推送角色。
+
+        Args:
+        """
+        async def run(user):
+            return self.service.describe_me(user)
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_my_schedule")
+    async def tool_my_schedule(self, event: AstrMessageEvent, day: str = "今天"):
+        """查询老师/班主任本人的“我的日程”（跨班级聚合的个人课表）。
+
+        Args:
+            day(string): 今天、明天、后天、本周、周三，或 2026-10-05 这样的日期
+        """
+        return await self._tool(event, lambda user: self.service.query_my_schedule(user, day))
+
+    @filter.llm_tool(name="remoteci_next_course")
+    async def tool_next(self, event: AstrMessageEvent):
+        """查询老师正在上的课和下一节课（班级、科目、节次、时间）。
+
+        Args:
+        """
+        return await self._tool(event, self.service.query_next)
+
+    @filter.llm_tool(name="remoteci_class_schedule")
+    async def tool_class_schedule(self, event: AstrMessageEvent, class_name: str = "", day: str = "今天"):
+        """查询某个班级的课表（含任课教师）。
+
+        Args:
+            class_name(string): 班级名称或其片段，只有一个班时可留空
+            day(string): 今天、明天、后天、本周、周三，或 2026-10-05 这样的日期
+        """
+        return await self._tool(event, lambda user: self.service.query_class_schedule(user, class_name or None, day))
+
+    @filter.llm_tool(name="remoteci_class_state")
+    async def tool_class_state(self, event: AstrMessageEvent, class_name: str = ""):
+        """查询班级教室当前课堂状态（上课/课间/放学、当前与下一节科目）。
+
+        Args:
+            class_name(string): 班级名称，只有一个班时可留空
+        """
+        return await self._tool(event, lambda user: self.service.query_state(user, class_name or None))
+
+    @filter.llm_tool(name="remoteci_get_reminders")
+    async def tool_get_reminders(self, event: AstrMessageEvent):
+        """查看当前用户的主动提醒设置（当日日程、次日日程、课前提醒、换课提醒、班主任班级换课提醒）。
+
+        Args:
+        """
+        async def run(user):
+            return self.service.reminder_summary(user)
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_set_reminders")
+    async def tool_set_reminders(self, event: AstrMessageEvent, today_enabled: bool | None = None,
+                                 today_time: str | None = None, tomorrow_enabled: bool | None = None,
+                                 tomorrow_mode: str | None = None, tomorrow_time: str | None = None,
+                                 before_enabled: bool | None = None, before_minutes: int | None = None,
+                                 change_enabled: bool | None = None, class_change_enabled: bool | None = None,
+                                 reset: bool | None = None):
+        """修改当前用户自己的主动提醒设置，只传需要修改的项。
+
+        Args:
+            today_enabled(boolean): 是否在上学时推送当天个人日程
+            today_time(string): 当天日程推送时间，HH:mm
+            tomorrow_enabled(boolean): 是否推送次日个人日程
+            tomorrow_mode(string): last_class 表示自己最后一节课下课时推送，fixed 表示固定时间推送
+            tomorrow_time(string): fixed 模式下的次日日程推送时间，HH:mm；设置它时应同时把 tomorrow_mode 设为 fixed
+            before_enabled(boolean): 是否开启课前提醒
+            before_minutes(number): 课前提前多少分钟提醒，1-120
+            change_enabled(boolean): 自己的课被换了是否提醒
+            class_change_enabled(boolean): 班主任：班里的课被换了是否提醒
+            reset(boolean): true 表示清除个人设置，恢复管理员统一设置
+        """
+        changes = {k: v for k, v in {
+            "today_enabled": today_enabled, "today_time": today_time, "tomorrow_enabled": tomorrow_enabled,
+            "tomorrow_mode": tomorrow_mode, "tomorrow_time": tomorrow_time, "before_enabled": before_enabled,
+            "before_minutes": before_minutes, "change_enabled": change_enabled,
+            "class_change_enabled": class_change_enabled}.items() if v is not None}
+        if tomorrow_time and not tomorrow_mode:
+            changes["tomorrow_mode"] = "fixed"
+        if reset:
+            changes = {"reset": True, **changes}
+        return await self._tool(event, lambda user: self.service.update_reminders(user, changes))
+
+    @filter.llm_tool(name="remoteci_send_notification")
+    async def tool_notify(self, event: AstrMessageEvent, class_name: str, message: str, title: str = ""):
+        """向班级教室的 ClassIsland 发送通知（显示在教室大屏上）。
+
+        Args:
+            class_name(string): 班级名称
+            message(string): 通知正文
+            title(string): 通知标题，可留空
+        """
+        return await self._tool(event, lambda user: self.service.notify(user, class_name, message, title))
+
+    @filter.llm_tool(name="remoteci_class_command")
+    async def tool_class_command(self, event: AstrMessageEvent, class_name: str, command: int,
+                                 payload_json: str = "{}", confirmed: bool = False):
+        """对单个班级执行 RemoteCI 控制命令（POST /api/commands）。命令编号与载荷格式先用 remoteci_reference(topic="control") 查询。
+        电源、重启、插件卸载、终端、文件分发等高风险操作必须先向用户复述并得到明确同意，再设 confirmed=true。
+
+        Args:
+            class_name(string): 班级名称
+            command(number): 命令编号，如 8 老师来了、2 通知、1 换课、6 音量、5 电源
+            payload_json(string): 命令载荷 JSON 对象（不含 command 字段），如 {"volume":{"level":30}}
+            confirmed(boolean): 用户是否已明确确认高风险操作
+        """
+        async def run(user):
+            try:
+                payload = json.loads(payload_json or "{}")
+            except json.JSONDecodeError as ex:
+                return f"payload_json 不是合法 JSON：{ex}"
+            return await self.service.send_command(user, class_name, int(command), payload, bool(confirmed))
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_api")
+    async def tool_api(self, event: AstrMessageEvent, method: str, path: str, query_json: str = "{}",
+                       body_json: str = "", confirmed: bool = False):
+        """以当前用户的 RemoteCI 账号调用任意 REST API（服务端按账号权限鉴权），用于换课、广播、班级/分组/账号/成员管理、配对码、备份等。
+        调用前先用 remoteci_reference 查阅接口；删除、恢复备份、广播和高风险控制必须先得到用户明确同意并设 confirmed=true。
+        整体替换类接口（如班级成员）要先 GET、合并、再 PUT。
+
+        Args:
+            method(string): HTTP 方法：GET、POST、PUT、DELETE
+            path(string): 以 /api/ 开头的路径，如 /api/schedule
+            query_json(string): 查询参数 JSON 对象，如 {"classId":"..."}
+            body_json(string): 请求体 JSON，可留空
+            confirmed(boolean): 用户是否已明确确认危险操作
+        """
+        async def run(user):
+            try:
+                query = json.loads(query_json or "{}")
+                body = json.loads(body_json) if body_json else None
+            except json.JSONDecodeError as ex:
+                return f"JSON 参数不合法：{ex}"
+            return await self.service.call_api(user, method, path, body, query, bool(confirmed))
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_reference")
+    async def tool_reference(self, event: AstrMessageEvent, topic: str = "overview"):
+        """读取 RemoteCI API 使用手册：overview（连接、身份权限、查询、错误码）、control（教室控制命令、换课、广播、扩展插件设置）、admin（班级、分组、账号、成员、配对码、备份、班主任权限）、plugin（本插件的指令与提醒）。
+
+        Args:
+            topic(string): overview、control、admin 或 plugin
+        """
+        files = {"overview": SKILL_DIR / "SKILL.md", "control": SKILL_DIR / "references" / "control.md",
+                 "admin": SKILL_DIR / "references" / "admin.md"}
+        if topic == "plugin":
+            return HELP
+        path = files.get(topic, files["overview"])
+        text = path.read_text("utf-8")
+        return text + ("\n\n（在本插件中，凭据由插件管理：用 remoteci_api 调用接口，无需自己处理 Authorization 头或登录续期。）"
+                       if topic == "overview" else "")
+
+    # ---------- 插件页面 Web API ----------
+
+    def _register_web(self) -> None:
+        routes = [
+            ("overview", self.web_overview, ["GET"]),
+            ("bindings", self.web_bindings, ["GET"]),
+            ("sessions", self.web_sessions, ["GET"]),
+            ("settings", self.web_settings, ["GET"]),
+            ("log", self.web_log, ["GET"]),
+            ("session/update", self.web_session_update, ["POST"]),
+            ("session/delete", self.web_session_delete, ["POST"]),
+            ("session/test", self.web_session_test, ["POST"]),
+            ("binding/unbind", self.web_binding_unbind, ["POST"]),
+            ("binding/refresh", self.web_binding_refresh, ["POST"]),
+            ("binding/reset_prefs", self.web_binding_reset, ["POST"]),
+            ("settings/reminders", self.web_settings_reminders, ["POST"]),
+            ("settings/holidays", self.web_settings_holidays, ["POST"]),
+            ("settings/pause", self.web_settings_pause, ["POST"]),
+            ("holidays/refresh", self.web_holidays_refresh, ["POST"]),
+        ]
+        for route, handler, methods in routes:
+            try:
+                self.context.register_web_api(f"/{PLUGIN}/{route}", handler, methods, f"RemoteCI {route}")
+            except Exception as ex:  # noqa: BLE001 - 旧版本没有插件 Web API 时不影响聊天功能
+                logger.warning(f"RemoteCI 插件页面接口注册失败（AstrBot 版本过旧？）：{ex}")
+                return
+
+    @staticmethod
+    def _ok(data):
+        payload = {"ok": True, "data": data}
+        return json_response(payload) if _NEW_WEB else jsonify(payload)
+
+    @staticmethod
+    def _fail(message: str, status: int = 400):
+        if _NEW_WEB:
+            return error_response(message, status_code=status)
+        return jsonify({"ok": False, "status": "error", "message": message}), status
+
+    @staticmethod
+    async def _body() -> dict:
+        if _NEW_WEB:
+            data = await web_request.json(default={})
+        else:
+            data = await web_request.get_json(silent=True)
+        return data if isinstance(data, dict) else {}
+
+    async def _guard(self, coro):
+        try:
+            return self._ok(await coro)
+        except ServiceError as ex:
+            return self._fail(str(ex))
+        except RemoteCiError as ex:
+            return self._fail(str(ex), 502)
+        except Exception as ex:  # noqa: BLE001
+            logger.exception("RemoteCI 页面接口出错")
+            return self._fail(f"{type(ex).__name__}: {ex}", 500)
+
+    async def _value(self, value):
+        return value
+
+    async def web_overview(self):
+        return await self._guard(self._value({**self.service.overview(), "roles": ROLE_NAMES}))
+
+    async def web_bindings(self):
+        return await self._guard(self._value(self.service.binding_rows()))
+
+    async def web_sessions(self):
+        return await self._guard(self._value({"sessions": self.service.session_rows(),
+                                              "bindings": [{"key": b["key"], "name": b["display_name"] or b["username"]}
+                                                           for b in self.service.binding_rows()]}))
+
+    async def web_settings(self):
+        state = self.service.store.state
+        return await self._guard(self._value({
+            "reminders": state["reminders"], "holidays": state["holidays"], "paused": state.get("paused", False),
+            "upcoming": self.service.holidays.upcoming(self.service.today(), state["holidays"]),
+            "official_data": self.service.holidays.has_year(self.service.today().year),
+            "poll_minutes": self.service.poll_seconds // 60,
+        }))
+
+    async def web_log(self):
+        return await self._guard(self._value(list(reversed(self.service.store.state["log"][-150:]))))
+
+    async def web_session_update(self):
+        body = await self._body()
+        return await self._guard(self.service.update_session(str(body.get("umo") or ""), body.get("patch") or {}))
+
+    async def web_session_delete(self):
+        body = await self._body()
+        return await self._guard(self.service.delete_session(str(body.get("umo") or "")))
+
+    async def web_session_test(self):
+        body = await self._body()
+        return await self._guard(self.service.preview(str(body.get("umo") or "")))
+
+    async def web_binding_unbind(self):
+        body = await self._body()
+        return await self._guard(self.service.admin_unbind(str(body.get("key") or "")))
+
+    async def web_binding_refresh(self):
+        body = await self._body()
+        return await self._guard(self.service.admin_refresh(str(body.get("key") or "")))
+
+    async def web_binding_reset(self):
+        body = await self._body()
+        return await self._guard(self.service.admin_reset_prefs(str(body.get("key") or "")))
+
+    async def web_settings_reminders(self):
+        body = await self._body()
+        return await self._guard(self.service.update_defaults(body.get("patch") or {}))
+
+    async def web_settings_holidays(self):
+        body = await self._body()
+        return await self._guard(self.service.update_holiday_settings(body))
+
+    async def web_settings_pause(self):
+        body = await self._body()
+        return await self._guard(self.service.set_paused(bool(body.get("paused"))))
+
+    async def web_holidays_refresh(self):
+        return await self._guard(self.service.refresh_holidays(force=True))
