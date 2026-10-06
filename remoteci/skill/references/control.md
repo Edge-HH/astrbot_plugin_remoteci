@@ -27,8 +27,8 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 `notification` 的字段：
 
 - `title`、`message`：通知标题和正文。
-- 可选开关（布尔值）：`isNotificationEffectEnabled`（强调特效）、`isNotificationSoundEnabled`（提醒音效）、`isSpeechEnabled`（语音朗读）、`isNotificationTopmostEnabled`（置顶主界面）、`isRollingEnabled`（正文滚动显示，默认关闭）。
-- 可选数值：`durationSeconds`（持续时间，秒）、`repeatCounts`（重复次数）。开启滚动时正文滚动 `repeatCounts` 遍；关闭时整条提醒依次显示 `repeatCounts` 次。
+- 可选开关（布尔值）：`isNotificationEffectEnabled`（强调特效）、`isNotificationSoundEnabled`（提醒音效）、`isSpeechEnabled`（语音朗读）、`isNotificationTopmostEnabled`（置顶主界面）、`isRollingEnabled`（正文滚动显示；省略时按旧客户端处理为滚动，需要静态正文时必须显式传 `false`）。
+- 可选数值：`durationSeconds`（持续时间，1-3600 秒）、`repeatCounts`（重复次数，1-10 次）。标题最多 60 字、正文最多 500 字，越界返回 `INVALID_REQUEST`。开启滚动时正文滚动 `repeatCounts` 遍；关闭时整条提醒依次显示 `repeatCounts` 次。
 - 正文超过 30 字时建议开启 `isRollingEnabled`，否则静态正文可能显示不全。
 
 `scheduleChange` 的字段：
