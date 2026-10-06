@@ -159,4 +159,9 @@ def test_dangerous_command_requires_confirmation(tmp_path):
         assert "已显示" in reply
         body = [c for c in fake.calls if c[1] == "/api/commands"][0][3]
         assert body["command"] == 2 and body["notification"]["message"] == "下午班会"
+        # 短正文静态显示；超过 30 字自动开启滚动。
+        assert body["notification"]["isRollingEnabled"] is False
+        await run_command(service, PRIVATE, "rci 通知 高一 " + "长" * 31)
+        body = [c for c in fake.calls if c[1] == "/api/commands"][-1][3]
+        assert body["notification"]["isRollingEnabled"] is True
     asyncio.run(run())

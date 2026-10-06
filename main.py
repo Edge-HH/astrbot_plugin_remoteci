@@ -321,11 +321,13 @@ class RemoteCiPlugin(Star):
 
         Args:
             class_name(string): 班级名称
-            command(number): 命令编号，如 8 老师来了、2 通知、1 换课、6 音量、5 电源
+            command(number): 命令编号，如 2 通知、1 换课、6 音量、5 电源
             payload_json(string): 命令载荷 JSON 对象（不含 command 字段），如 {"volume":{"level":30}}
             confirmed(boolean): 用户是否已明确确认高风险操作
         """
         async def run(user):
+            if int(command) == 8:
+                return "该控制命令当前不可用。"
             try:
                 payload = json.loads(payload_json or "{}")
             except json.JSONDecodeError as ex:

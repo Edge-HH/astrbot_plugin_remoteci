@@ -1,7 +1,8 @@
 (() => {
     "use strict";
 
-    const bridge = window.AstrBotPluginPage;
+    // AstrBot 把 bridge SDK 插在 </body> 前，晚于本脚本执行，所以每次用时再取，不能在加载时缓存。
+    const host = () => window.AstrBotPluginView || window.AstrBotPluginPage;
     const app = document.getElementById("app");
     const fab = document.getElementById("fab");
     const toastEl = document.getElementById("toast");
@@ -39,8 +40,8 @@
         return r;
     }
     const errorText = (err) => err?.data?.message || err?.response?.data?.message || err?.message || String(err);
-    const get = async (endpoint) => unwrap(await bridge.apiGet(endpoint));
-    const post = async (endpoint, body) => unwrap(await bridge.apiPost(endpoint, body || {}));
+    const get = async (endpoint) => unwrap(await host().apiGet(endpoint));
+    const post = async (endpoint, body) => unwrap(await host().apiPost(endpoint, body || {}));
 
     async function action(fn, okText) {
         try {
@@ -310,6 +311,7 @@
     // ---------- 启动 ----------
     async function boot() {
         applyTheme();
+        const bridge = host();
         if (!bridge) {
             app.innerHTML = alertBox("error", "请在 AstrBot 管理面板中打开此页面", "插件页面需要 AstrBot 4.26 或更新版本提供的 AstrBotPluginPage 接口。");
             return;
@@ -320,5 +322,6 @@
         } catch { /* 拿不到宿主上下文时按系统深浅色 */ }
         render();
     }
-    boot();
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+    else boot();
 })();

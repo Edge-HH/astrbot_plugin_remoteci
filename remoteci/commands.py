@@ -35,7 +35,6 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 发起换课请在 RemoteCI WebUI 或手机 App 的“换课”页；有新申请时会主动私聊提醒。
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
-/rci 老师来了 <班级名>
 更多操作（换课、音量、广播、系统管理等）直接用自然语言告诉我即可。
 群聊中请 @我 后再发指令；群聊不做个人主动提醒。"""
 
@@ -51,7 +50,6 @@ SUBCOMMANDS = {
     "classes": "classes", "班级列表": "classes",
     "remind": "remind", "提醒": "remind", "reminder": "remind",
     "notify": "notify", "通知": "notify",
-    "coming": "coming", "老师来了": "coming",
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
     "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
 }
@@ -84,6 +82,8 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
     if not tokens:
         return HELP
     head = tokens[0].lower()
+    if head in ("coming", "老师来了"):
+        return "该控制命令当前不可用。"
     action = SUBCOMMANDS.get(head)
     args = tokens[1:]
     try:
@@ -132,8 +132,6 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
             return await service.notify(user, args[0], " ".join(args[1:]))
         if action == "swap":
             return await run_swap_command(service, user, args)
-        if action == "coming":
-            return await service.send_command(user, " ".join(args) or None, 8, None, confirmed=True)
     except ServiceError as ex:
         return str(ex)
     return HELP

@@ -14,7 +14,6 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 | 编号 | 操作 | 载荷 | 所需权限位 |
 | ---: | --- | --- | ---: |
-| 8 | 老师来了 | 无 | 64 |
 | 2 | 发送通知 | `notification`，见下 | 8 |
 | 3 | 清除当前提醒 | 无 | 8 |
 | 9 | 语音消息 | `voiceMessage`：`{"format":"pcm_s16le_16000_mono","audioBase64":"…"}`，16 kHz 单声道 16 位 PCM，最长 60 秒 | 512 |
@@ -28,8 +27,9 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 `notification` 的字段：
 
 - `title`、`message`：通知标题和正文。
-- 可选开关（布尔值）：`isNotificationEffectEnabled`（强调特效）、`isNotificationSoundEnabled`（提醒音效）、`isSpeechEnabled`（语音朗读）、`isNotificationTopmostEnabled`（置顶主界面）。
-- 可选数值：`durationSeconds`（持续时间，秒）、`repeatCounts`（重复次数）。
+- 可选开关（布尔值）：`isNotificationEffectEnabled`（强调特效）、`isNotificationSoundEnabled`（提醒音效）、`isSpeechEnabled`（语音朗读）、`isNotificationTopmostEnabled`（置顶主界面）、`isRollingEnabled`（正文滚动显示，默认关闭）。
+- 可选数值：`durationSeconds`（持续时间，秒）、`repeatCounts`（重复次数）。开启滚动时正文滚动 `repeatCounts` 遍；关闭时整条提醒依次显示 `repeatCounts` 次。
+- 正文超过 30 字时建议开启 `isRollingEnabled`，否则静态正文可能显示不全。
 
 `scheduleChange` 的字段：
 
@@ -92,7 +92,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 {"command":2,"notification":{"title":"年级大会","message":"15:30 报告厅集合"},"classIds":[],"groupIds":["<分组 id>"]}
 ```
 
-- **支持的命令**：只有 `2` 通知、`3` 清除提醒、`5` 电源（带 `powerAction`）、`8` 老师来了、`9` 语音。
+- **支持的命令**：只有 `2` 通知、`3` 清除提醒、`5` 电源（带 `powerAction`）和 `9` 语音。
 - **目标**：`classIds` 和 `groupIds` 至少填一项。分组会展开为它包含的班级，班级 ID 来自 `GET /api/me/classes`，分组 ID 来自 `GET /api/class-groups`（管理员）。
 - **鉴权**：服务端逐班按账号权限判断。
 - **返回**：`results[]`，每班一项，含 `classId` 和 `success`。逐项汇报给用户，不要只说“已完成”。

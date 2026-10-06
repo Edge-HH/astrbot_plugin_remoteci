@@ -32,6 +32,8 @@ ROLE_NAMES = {ROLE_AUTO: "自动", ROLE_NONE: "不推送", ROLE_TEACHER: "老师
 
 # 需要用户在对话中明确确认后才执行的命令编号（与 skill 的“先确认再执行”一致）。
 DANGEROUS_COMMANDS = {5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23}
+# 与 RemoteCI 服务端 NotificationRequest.RollingSuggestionThreshold 一致。
+ROLLING_SUGGESTION_THRESHOLD = 30
 
 
 @dataclass
@@ -391,6 +393,8 @@ class RemoteCiService:
     async def send_command(self, user: ChatUser, class_ref: str | None, command: int, payload: dict | None,
                            confirmed: bool) -> str:
         binding = self.require_binding(user)
+        if command == 8:
+            raise ServiceError("该控制命令当前不可用。")
         if command in DANGEROUS_COMMANDS and not confirmed:
             raise ServiceError("这是高风险操作，请先向用户复述目标班级和具体内容，得到明确同意后再以 confirmed=true 重试。")
         cls = self.resolve_class(binding, class_ref)
@@ -407,9 +411,11 @@ class RemoteCiService:
 
     async def notify(self, user: ChatUser, class_ref: str | None, message: str, title: str = "") -> str:
         sender = user.sender_name or "老师"
+        # 聊天里无法像 WebUI/手机端那样提示用户；正文超过 30 字时直接开启滚动，避免静态正文显示不全。
         return await self.send_command(user, class_ref, 2, {"notification": {
             "title": title or f"{sender}的通知", "message": message, "isNotificationEffectEnabled": True,
-            "isNotificationSoundEnabled": True}}, confirmed=True)
+            "isNotificationSoundEnabled": True,
+            "isRollingEnabled": len(message.strip()) > ROLLING_SUGGESTION_THRESHOLD}}, confirmed=True)
 
     async def call_api(self, user: ChatUser, method: str, path: str, body: Any = None, query: dict | None = None,
                        confirmed: bool = False) -> str:
@@ -419,6 +425,8 @@ class RemoteCiService:
             raise ServiceError("path 必须以 /api/ 开头。")
         if path.startswith("/api/auth/"):
             raise ServiceError("认证接口由插件自动处理，不能直接调用。")
+        if path.startswith("/api/commands") and isinstance(body, dict) and body.get("command") == 8:
+            raise ServiceError("该控制命令当前不可用。")
         risky = method == "DELETE" or "/restore" in path or path.startswith("/api/commands/broadcast") or (
             path.startswith("/api/commands") and isinstance(body, dict) and body.get("command") in DANGEROUS_COMMANDS)
         if risky and not confirmed:
