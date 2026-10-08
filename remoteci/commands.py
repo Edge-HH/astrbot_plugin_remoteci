@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .service import ChatUser, RemoteCiService, ServiceError
+from .makeup import run_makeup_command
 from .swaps import run_swap_command
 
 COMMAND_NAMES = ("rci", "remoteci", "课表")
@@ -20,6 +21,8 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 状态 [班级名]   教室当前课堂状态
 /rci 班级列表   可访问的班级
 /rci 假期   今天是否因节假日暂停推送
+/rci 调休   近期假期与调休补课安排
+/rci 调休 2026-10-10 周三|不补课|自动   修改补课安排（管理员）
 ━ 主动提醒（老师/班主任，仅私聊推送）━
 /rci 提醒   查看提醒设置
 /rci 提醒 开|关 <当日|次日|课前|换课|班级换课|全部>
@@ -52,6 +55,7 @@ SUBCOMMANDS = {
     "notify": "notify", "通知": "notify",
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
     "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
+    "makeup": "makeup", "调休": "makeup", "补课": "makeup",
 }
 
 REMIND_ITEMS = {
@@ -132,6 +136,8 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
             return await service.notify(user, args[0], " ".join(args[1:]))
         if action == "swap":
             return await run_swap_command(service, user, args)
+        if action == "makeup":
+            return await run_makeup_command(service, user, args)
     except ServiceError as ex:
         return str(ex)
     return HELP

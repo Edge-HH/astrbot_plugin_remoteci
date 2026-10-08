@@ -268,6 +268,29 @@ class RemoteCiPlugin(Star):
             return await decide(self.service, binding, action, request_id, note)
         return await self._tool(event, run)
 
+    @filter.llm_tool(name="remoteci_holidays")
+    async def tool_holidays(self, event: AstrMessageEvent):
+        """查看近期法定假期与调休安排：哪几天放假（教室课表自动关闭）、哪几天调休上学以及上周几的课。"""
+        from .remoteci.makeup import list_makeup
+
+        async def run(user):
+            return await list_makeup(self.service, self.service.require_binding(user))
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_set_makeup")
+    async def tool_set_makeup(self, event: AstrMessageEvent, date: str, follow: str):
+        """修改某个调休上学日补哪天的课（需要系统管理员）。修改前先向用户复述日期和安排，得到确认后再调用。
+
+        Args:
+            date(string): 调休上学日，格式 YYYY-MM-DD
+            follow(string): 周一、周二、周三、周四、周五，或“不补课”，或“自动”（恢复自动推算）
+        """
+        from .remoteci.makeup import set_makeup
+
+        async def run(user):
+            return await set_makeup(self.service, self.service.require_binding(user), date, follow)
+        return await self._tool(event, run)
+
     @filter.llm_tool(name="remoteci_get_reminders")
     async def tool_get_reminders(self, event: AstrMessageEvent):
         """查看当前用户的主动提醒设置（当日日程、次日日程、课前提醒、换课提醒、班主任班级换课提醒）。
