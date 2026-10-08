@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from datetime import date
 from typing import TYPE_CHECKING
@@ -19,7 +18,6 @@ from .client import RemoteCiError
 if TYPE_CHECKING:  # pragma: no cover
     from .service import ChatUser, RemoteCiService
 
-log = logging.getLogger("astrbot_plugin_remoteci.swaps")
 
 PERMISSION_REQUEST_SWAP = 4096
 POLL_SECONDS = 60
@@ -118,7 +116,7 @@ class SwapInbox:
                 dirty |= await self._poll_binding(binding)
             except RemoteCiError as ex:
                 if ex.status not in (401, 403, 404):
-                    log.warning("RemoteCI 换课通知轮询失败 %s：%s", key, ex)
+                    self._service.log.warning(f"RemoteCI 换课通知轮询失败 {key}：{ex}")
         return dirty
 
     async def _poll_binding(self, binding: dict) -> bool:

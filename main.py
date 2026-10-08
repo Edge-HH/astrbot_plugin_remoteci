@@ -15,6 +15,11 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
+try:
+    from astrbot.core.agent.message import TextPart
+except ImportError:  # 旧版 AstrBot
+    TextPart = None
+
 from .remoteci.client import RemoteCiError
 from .remoteci.commands import HELP, run_command
 from .remoteci.service import ROLE_NAMES, ChatUser, RemoteCiService, ServiceError
@@ -47,7 +52,7 @@ class RemoteCiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config or {}
-        self.service = RemoteCiService(_data_dir(), send=self._send, config=dict(self.config))
+        self.service = RemoteCiService(_data_dir(), send=self._send, config=dict(self.config), logger=logger)
         self._register_web()
 
     async def initialize(self):
@@ -132,14 +137,17 @@ class RemoteCiPlugin(Star):
             return
         if binding:
             p = binding.get("profile") or {}
-            req.system_prompt = (req.system_prompt or "") + (
-                f"\n[RemoteCI] 当前用户已连接 RemoteCI 账号“{p.get('displayName')}”。"
-                "涉及课表、日程、下节课、班级、教室控制、提醒设置或 RemoteCI 管理时，使用 remoteci_ 开头的工具；"
-                "需要接口细节时先调用 remoteci_reference。")
+            hint = (f"[RemoteCI] 当前用户已连接 RemoteCI 账号“{p.get('displayName')}”。"
+                    "涉及课表、日程、下节课、班级、教室控制、提醒设置或 RemoteCI 管理时，使用 remoteci_ 开头的工具；"
+                    "需要接口细节时先调用 remoteci_reference。")
         else:
-            req.system_prompt = (req.system_prompt or "") + (
-                "\n[RemoteCI] 当前用户尚未连接 RemoteCI。若用户想查课表或使用 RemoteCI，"
-                "引导其私聊提供服务器地址和 API Key（或用户名密码），然后调用 remoteci_connect。")
+            hint = ("[RemoteCI] 当前用户尚未连接 RemoteCI。若用户想查课表或使用 RemoteCI，"
+                    "引导其私聊提供服务器地址和 API Key（或用户名密码），然后调用 remoteci_connect。")
+        # 作为本轮用户消息的临时附加内容注入，不改系统提示词（保住提示词缓存），也不写入对话历史。
+        if hasattr(TextPart, "mark_as_temp") and hasattr(req, "extra_user_content_parts"):
+            req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
+        else:  # 旧版 AstrBot 没有 extra_user_content_parts / mark_as_temp
+            req.system_prompt = (req.system_prompt or "") + "\n" + hint
 
     async def _tool(self, event: AstrMessageEvent, fn) -> str:
         if not self._addressed(event):

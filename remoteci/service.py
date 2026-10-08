@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -24,7 +23,13 @@ from .swaps import SwapInbox
 from .store import (DEFAULT_SESSION_PUSH, REMINDER_KEYS, ROLE_AUTO, ROLE_CLASS_GROUP, ROLE_HEAD, ROLE_NONE,
                     ROLE_TEACHER, SESSION_ROLES, Store)
 
-log = logging.getLogger("astrbot_plugin_remoteci")
+
+class _NullLog:
+    """未注入日志器时（如单元测试）静默丢弃日志；插件运行时由 main.py 注入 astrbot.api.logger。"""
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        return lambda *args, **kwargs: None
+
 
 ROLE_KIND_NAMES = {2: "管理员", 4: "班主任", 5: "老师", 1: "学生"}
 ROLE_NAMES = {ROLE_AUTO: "自动", ROLE_NONE: "不推送", ROLE_TEACHER: "老师", ROLE_HEAD: "班主任",
@@ -53,7 +58,8 @@ class ServiceError(Exception):
 
 class RemoteCiService:
     def __init__(self, data_dir: Path, *, send: Callable[[str, str], Awaitable[bool]],
-                 config: dict | None = None, now: Callable[[], datetime] | None = None):
+                 config: dict | None = None, now: Callable[[], datetime] | None = None, logger: Any = None):
+        self.log = logger or _NullLog()
         self.store = Store(data_dir)
         self.config = config or {}
         self._send = send
@@ -509,7 +515,7 @@ class RemoteCiService:
                 raise
             except Exception as ex:  # noqa: BLE001 - 调度循环不能因单次错误退出
                 self.last_tick_error = f"{type(ex).__name__}: {ex}"
-                log.exception("RemoteCI 推送调度出错")
+                self.log.exception("RemoteCI 推送调度出错")
             await asyncio.sleep(30)
 
     async def refresh_holidays(self, force: bool = False) -> list[str]:
@@ -547,7 +553,7 @@ class RemoteCiService:
                     dirty |= await self._tick_group(now, umo, session, binding, h_today, h_tomorrow)
             except RemoteCiError as ex:
                 if ex.status not in (401, 404):
-                    log.warning("RemoteCI 推送 %s 失败：%s", umo, ex)
+                    self.log.warning(f"RemoteCI 推送 {umo} 失败：{ex}")
         if dirty or swap_dirty:
             self.store.prune_sent()
             await self.store.save()
@@ -635,7 +641,7 @@ class RemoteCiService:
         try:
             ok = await self._send(umo, text)
         except Exception as ex:  # noqa: BLE001
-            log.warning("RemoteCI 主动消息发送失败 %s：%s", umo, ex)
+            self.log.warning(f"RemoteCI 主动消息发送失败 {umo}：{ex}")
             ok = False
         session = self.store.sessions.get(umo) or {}
         self.store.add_log(kind, session.get("name") or umo, text, ok)
