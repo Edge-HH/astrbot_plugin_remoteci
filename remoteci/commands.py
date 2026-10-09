@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .service import ChatUser, RemoteCiService, ServiceError
 from .makeup import run_makeup_command
+from .profiles import run_profile_command
 from .swaps import run_swap_command
 
 COMMAND_NAMES = ("rci", "remoteci", "课表")
@@ -36,6 +37,9 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 换课 通过|拒绝 <编号> [备注]
 /rci 换课 撤回 <编号>   撤回别人对我的强制换课
 发起换课请在 RemoteCI WebUI 或手机 App 的“换课”页；有新申请时会主动私聊提醒。
+━ 服务端档案（管理员、班主任）━
+/rci 档案   查看服务端档案库
+/rci 档案 下发 <档案名> <更新|新建> [班级名…]   下发到教室电脑
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
 更多操作（换课、音量、广播、系统管理等）直接用自然语言告诉我即可。
@@ -56,6 +60,7 @@ SUBCOMMANDS = {
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
     "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
     "makeup": "makeup", "调休": "makeup", "补课": "makeup",
+    "profile": "profile", "档案": "profile", "profiles": "profile",
 }
 
 REMIND_ITEMS = {
@@ -138,6 +143,8 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
             return await run_swap_command(service, user, args)
         if action == "makeup":
             return await run_makeup_command(service, user, args)
+        if action == "profile":
+            return await run_profile_command(service, user, args)
     except ServiceError as ex:
         return str(ex)
     return HELP

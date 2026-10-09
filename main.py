@@ -291,6 +291,35 @@ class RemoteCiPlugin(Star):
             return await set_makeup(self.service, self.service.require_binding(user), date, follow)
         return await self._tool(event, run)
 
+    @filter.llm_tool(name="remoteci_profiles")
+    async def tool_profiles(self, event: AstrMessageEvent):
+        """查看服务端档案库（ClassIsland 时间表/课表/科目档案）：全局模板与各班档案、修订号和内容数量。需要系统管理员或班主任。"""
+        from .remoteci.profiles import list_profiles
+
+        async def run(user):
+            return await list_profiles(self.service, self.service.require_binding(user))
+        return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_apply_profile")
+    async def tool_apply_profile(self, event: AstrMessageEvent, profile: str, mode: str, classes: str = "",
+                                 sections: str = "全部", import_name: str = "", confirm_replace: bool = False):
+        """把服务端已保存的档案下发到教室电脑，会改变教室正在使用的课表。调用前必须向用户复述档案、班级、方式和类别并得到同意。
+
+        Args:
+            profile(string): 档案名称或 ID
+            mode(string): 更新（合并到当前档案）、替换（整体替换所选类别，需 confirm_replace=true）或 新建（创建并启用新档案，需 import_name）
+            classes(string): 目标班级名，多个用空格分隔；班级档案可留空，全局模板必填
+            sections(string): 时间表、课表、科目 或 全部，多个用顿号分隔
+            import_name(string): 新建方式下设备上的新档案名
+            confirm_replace(boolean): 用户已明确同意整体替换时为 true
+        """
+        from .remoteci.profiles import apply_profile
+
+        async def run(user):
+            return await apply_profile(self.service, self.service.require_binding(user), profile, mode,
+                                       classes.split() or None, sections, import_name, confirm_replace)
+        return await self._tool(event, run)
+
     @filter.llm_tool(name="remoteci_get_reminders")
     async def tool_get_reminders(self, event: AstrMessageEvent):
         """查看当前用户的主动提醒设置（当日日程、次日日程、课前提醒、换课提醒、班主任班级换课提醒）。

@@ -74,6 +74,14 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 - `points[]`：每项为 `{"startTime":"08:00","endTime":"08:40","timeType":0,"breakName":null}`，`timeType` 为 `0` 上课、`1` 课间。
 - 可选：`timeLayoutId`（替换已有时间表）、`restartAfter`。
 
+## 服务端档案管理
+
+新档案功能通过 WebUI 的独立页面操作：管理员进入“档案管理”(`/Profiles`) 维护全局模板、批量编辑和下发；本班班主任进入班级菜单“档案”(`/ClassProfiles`) 管理本班副本，且需要本班“换课 / 科目教师”权限（16）。模板分配为独立副本，服务端不读取或自动同步设备当前档案；班级离线时也能保存服务端档案。
+
+档案页面使用命令 `25 ApplyProfile` 和能力 `profile.apply`，包含更新当前档案、整体替换所选类别、创建并启用新档案三种显式选择方式。它属于 `serverOnly`：只能经档案管理页面或档案接口 `POST /api/profiles/apply` 下发，`POST /api/commands`、广播、手机/手表命令通道和局域网直连都拒绝。查看、保存和下发服务端档案的接口见 [profiles.md](profiles.md)；能力缺失时说明需要升级教室端插件。
+
+上面的命令 `17`、`18` 仅保留原有管理员 API 兼容语义。按旧接口操作时仍使用原载荷和权限；它们不会读写服务端档案库，也不能代替命令 `25`。新页面保存与设备下发分开，下发结果逐设备报告，离线不会自动排队。
+
 ## 扩展插件设置
 
 其他 ClassIsland 插件可以声明“插件设置”（例如提醒间隔、播报音色）。修改设置不走 `/api/commands`（命令 `24` 在该接口和广播接口都会被拒绝），使用专用接口：
