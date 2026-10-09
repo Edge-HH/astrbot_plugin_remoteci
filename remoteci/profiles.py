@@ -27,11 +27,13 @@ MODES = {
 }
 MODE_TEXT = {1: "更新当前档案", 2: "整体替换所选类别", 3: "创建并启用新档案", 4: "作为临时层下发"}
 SECTIONS = {"时间表": 1, "课表": 2, "科目": 4, "全部": 7, "all": 7}
+REPLACE_WORDS = ("替换", "替换同日", "replace")
 
 PROFILE_HELP = """服务端档案（管理员或本班班主任）
 /rci 档案   查看服务端档案库
 /rci 档案 收集 [班级名…] [保存]   读取教室电脑当前档案（含临时层），加“保存”则存为该班服务端档案
 /rci 档案 下发 <档案名> <更新|新建|临时层> [班级名…]   下发到教室电脑（类别默认全部）
+/rci 档案 下发 <档案名> 临时层 [班级名…] 替换   同一天已有临时层时明确替换
 编辑档案内容请在 RemoteCI WebUI 的“档案管理”页完成。"""
 
 
@@ -209,9 +211,13 @@ async def run_profile_command(service: "RemoteCiService", user: "ChatUser", args
             names = [word for word in args[1:] if word not in ("保存", "save")]
             return await collect_profiles(service, binding, names or None, save=len(names) != len(args) - 1)
         if args[0] in ("下发", "应用", "apply") and len(args) >= 3:
-            if parse_mode(args[2]) == 2:
+            mode = parse_mode(args[2])
+            if mode == 2:
                 return "整体替换会清空设备上所选类别，聊天指令不支持；请在 WebUI 档案页确认后下发，或直接告诉我并确认。"
-            return await apply_profile(service, binding, args[1], args[2], args[3:] or None)
+            # 用户在指令里亲自写出“替换”即是对覆盖同日临时层的明确确认，只对临时层方式有效。
+            replace = mode == 4 and any(word in REPLACE_WORDS for word in args[3:])
+            classes = [word for word in args[3:] if word not in REPLACE_WORDS] if mode == 4 else args[3:]
+            return await apply_profile(service, binding, args[1], args[2], classes or None, replace_temp_layers=replace)
         return PROFILE_HELP
     except ValueError as ex:
         return str(ex)

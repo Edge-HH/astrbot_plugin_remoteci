@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from remoteci.profiles import apply_profile, collect_profiles, format_profiles, parse_sections, summarize_profile
+from remoteci.profiles import apply_profile, collect_profiles, format_profiles, parse_sections, run_profile_command, summarize_profile
 from remoteci.service import ServiceError
 
 CLASS_A = "11111111-0000-0000-0000-00000000000a"
@@ -145,4 +145,20 @@ def test_temp_layer_mode_ignores_sections_and_passes_replace_flag():
     body = service.calls[-1][2]
     assert body["mode"] == 4 and body["sections"] == 0 and body["replaceExistingTempLayers"] is True
     run(apply_profile(service, BINDING, "高一1班", "更新", replace_temp_layers=True))
+    assert service.calls[-1][2]["replaceExistingTempLayers"] is False
+
+
+class CommandService(FakeService):
+    def require_binding(self, user):
+        return BINDING
+
+
+def test_command_replaces_same_day_temp_layers_only_when_user_writes_replace():
+    service = CommandService()
+    run(run_profile_command(service, None, ["下发", "高一1班", "临时层"]))
+    assert service.calls[-1][2]["replaceExistingTempLayers"] is False
+    run(run_profile_command(service, None, ["下发", "统一模板", "临时层", "高一", "替换"]))
+    body = service.calls[-1][2]
+    assert body["replaceExistingTempLayers"] is True and body["classIds"] == [CLASS_A]
+    run(run_profile_command(service, None, ["下发", "高一1班", "更新", "替换"]))
     assert service.calls[-1][2]["replaceExistingTempLayers"] is False
