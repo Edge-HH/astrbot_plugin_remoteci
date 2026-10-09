@@ -159,7 +159,7 @@ async def collect_profiles(service: "RemoteCiService", binding: dict, classes: l
             line += f"；已保存为服务端档案（修订 {saved[0].get('revision')}）"
         lines.append(line)
     if not save:
-        lines.append("收集结果尚未保存。需要存为服务端档案时，请确认后加“保存”重试，或在 WebUI 档案页编辑后保存。")
+        lines.append("需要存为服务端档案时，请确认后加“保存”重试，或在 WebUI 档案页编辑后保存。")
     return "\n".join(lines)
 
 

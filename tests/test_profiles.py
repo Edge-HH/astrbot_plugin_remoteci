@@ -102,7 +102,7 @@ class CollectService(FakeService):
     async def _call(self, binding, method, path, *, params=None, body=None):
         self.calls.append((method, path, body if body is not None else params))
         if path == "/api/profiles/collect":
-            return {"success": True, "message": "已收集 1 个班级，失败 0 个。", "results": [
+            return {"success": True, "message": "已收集 1 个班级，失败 0 个。收集结果尚未保存。", "results": [
                 {"classId": CLASS_A, "className": "高一(1)班", "success": True, "message": "已收集", "profileJson": PROFILE_JSON, "errors": self.errors}]}
         if method == "GET":
             return [self.existing] if self.existing else []
@@ -116,7 +116,7 @@ def test_summary_counts_regular_objects_and_temp_layer_dates():
 def test_collect_defaults_to_the_only_class_and_does_not_save():
     service = CollectService()
     text = run(collect_profiles(service, BINDING))
-    assert "临时层 1（2026-10-12）" in text and "尚未保存" in text
+    assert "临时层 1（2026-10-12）" in text and "尚未保存" in text and "加“保存”重试" in text
     assert [call[:2] for call in service.calls] == [("POST", "/api/profiles/collect")]
     assert service.calls[0][2] == {"classIds": [CLASS_A]}
 
