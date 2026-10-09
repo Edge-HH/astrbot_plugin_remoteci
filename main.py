@@ -300,24 +300,40 @@ class RemoteCiPlugin(Star):
             return await list_profiles(self.service, self.service.require_binding(user))
         return await self._tool(event, run)
 
+    @filter.llm_tool(name="remoteci_collect_profile")
+    async def tool_collect_profile(self, event: AstrMessageEvent, classes: str = "", save: bool = False):
+        """从教室电脑读取 ClassIsland 当前正在使用的档案（含按日期安排的临时层），报告内容概要。只读；save=true 时会把结果保存为该班的服务端档案并覆盖原有版本，保存前必须得到用户同意。需要系统管理员或班主任。
+
+        Args:
+            classes(string): 班级名，多个用空格分隔；只管理一个班时可留空
+            save(boolean): 用户已明确同意把收集结果保存为服务端班级档案时为 true
+        """
+        from .remoteci.profiles import collect_profiles
+
+        async def run(user):
+            return await collect_profiles(self.service, self.service.require_binding(user), classes.split() or None, save)
+        return await self._tool(event, run)
+
     @filter.llm_tool(name="remoteci_apply_profile")
     async def tool_apply_profile(self, event: AstrMessageEvent, profile: str, mode: str, classes: str = "",
-                                 sections: str = "全部", import_name: str = "", confirm_replace: bool = False):
-        """把服务端已保存的档案下发到教室电脑，会改变教室正在使用的课表。调用前必须向用户复述档案、班级、方式和类别并得到同意。
+                                 sections: str = "全部", import_name: str = "", confirm_replace: bool = False,
+                                 replace_temp_layers: bool = False):
+        """把服务端已保存的档案下发到教室电脑，会改变教室正在使用的课表。调用前必须向用户复述档案、班级、方式和类别（临时层则复述日期）并得到同意。
 
         Args:
             profile(string): 档案名称或 ID
-            mode(string): 更新（合并到当前档案）、替换（整体替换所选类别，需 confirm_replace=true）或 新建（创建并启用新档案，需 import_name）
+            mode(string): 更新（合并到当前档案）、替换（整体替换所选类别，需 confirm_replace=true）、新建（创建并启用新档案，需 import_name）或 临时层（只下发档案中按日期安排的临时层，不改常规课表）
             classes(string): 目标班级名，多个用空格分隔；班级档案可留空，全局模板必填
-            sections(string): 时间表、课表、科目 或 全部，多个用顿号分隔
+            sections(string): 时间表、课表、科目 或 全部，多个用顿号分隔；临时层方式忽略
             import_name(string): 新建方式下设备上的新档案名
             confirm_replace(boolean): 用户已明确同意整体替换时为 true
+            replace_temp_layers(boolean): 临时层方式下，用户已同意替换教室电脑同一天已有的临时层或预定课表时为 true
         """
         from .remoteci.profiles import apply_profile
 
         async def run(user):
             return await apply_profile(self.service, self.service.require_binding(user), profile, mode,
-                                       classes.split() or None, sections, import_name, confirm_replace)
+                                       classes.split() or None, sections, import_name, confirm_replace, replace_temp_layers)
         return await self._tool(event, run)
 
     @filter.llm_tool(name="remoteci_get_reminders")

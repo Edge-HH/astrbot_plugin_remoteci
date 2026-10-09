@@ -106,7 +106,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 
 ## 7. 服务端档案（系统管理员、班主任）
 
-用户要查看、保存、复制、删除服务端档案库中的模板或班级档案，或者把档案下发到教室电脑时，先读 [profiles.md](references/profiles.md)。
+用户要查看、保存、复制、删除服务端档案库中的模板或班级档案，从教室电脑收集当前档案，或者把档案（包括某天的临时层）下发到教室电脑时，先读 [profiles.md](references/profiles.md)。
 
 ## 8. 调休与节假日
 

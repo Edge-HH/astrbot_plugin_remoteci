@@ -1,8 +1,9 @@
 import asyncio
+import json
 
 import pytest
 
-from remoteci.profiles import apply_profile, format_profiles, parse_sections
+from remoteci.profiles import apply_profile, collect_profiles, format_profiles, parse_sections, summarize_profile
 from remoteci.service import ServiceError
 
 CLASS_A = "11111111-0000-0000-0000-00000000000a"
@@ -81,3 +82,67 @@ def test_unknown_mode_and_profile_are_reported():
     service = FakeService()
     assert "应用方式只能是" in run(apply_profile(service, BINDING, "统一模板", "随便"))
     assert "找不到档案" in run(apply_profile(service, BINDING, "不存在", "更新"))
+
+
+PROFILE_JSON = json.dumps({
+    "Name": "设备档案",
+    "TimeLayouts": {"l1": {"Name": "作息", "Layouts": []}, "l2": {"Name": "作息（临时层）", "IsOverlay": True, "Layouts": []}},
+    "ClassPlans": {"p1": {"Name": "周一"}, "p2": {"Name": "周二"}, "o1": {"Name": "周一（临时层）", "IsOverlay": True}},
+    "Subjects": {"s1": {"Name": "语文"}},
+    "OrderedSchedules": {"2026-10-12T00:00:00+08:00": {"ClassPlanId": "o1"}, "2026-10-13T00:00:00": {"ClassPlanId": "p2"}},
+})
+
+
+class CollectService(FakeService):
+    def __init__(self, existing=None, errors=None):
+        super().__init__()
+        self.existing = existing
+        self.errors = errors or []
+
+    async def _call(self, binding, method, path, *, params=None, body=None):
+        self.calls.append((method, path, body if body is not None else params))
+        if path == "/api/profiles/collect":
+            return {"success": True, "message": "已收集 1 个班级，失败 0 个。", "results": [
+                {"classId": CLASS_A, "className": "高一(1)班", "success": True, "message": "已收集", "profileJson": PROFILE_JSON, "errors": self.errors}]}
+        if method == "GET":
+            return [self.existing] if self.existing else []
+        return [{"revision": (self.existing or {}).get("revision", 0) + 1}]
+
+
+def test_summary_counts_regular_objects_and_temp_layer_dates():
+    assert summarize_profile(PROFILE_JSON) == "时间表 1、课表 2、科目 1、临时层 1（2026-10-12）"
+
+
+def test_collect_defaults_to_the_only_class_and_does_not_save():
+    service = CollectService()
+    text = run(collect_profiles(service, BINDING))
+    assert "临时层 1（2026-10-12）" in text and "尚未保存" in text
+    assert [call[:2] for call in service.calls] == [("POST", "/api/profiles/collect")]
+    assert service.calls[0][2] == {"classIds": [CLASS_A]}
+
+
+def test_collect_and_save_overwrites_existing_class_profile_with_revision():
+    service = CollectService(existing={"id": "c1", "name": "高一1班档案", "classId": CLASS_A, "revision": 4, "sourceTemplateId": "t1"})
+    text = run(collect_profiles(service, BINDING, ["高一"], save=True))
+    assert "已保存为服务端档案（修订 5）" in text
+    method, path, body = service.calls[-1]
+    assert (method, path) == ("PUT", "/api/profiles")
+    item = body["items"][0]
+    assert (item["id"], item["revision"], item["sourceTemplateId"], item["name"]) == ("c1", 4, "t1", "高一1班档案")
+    assert item["profileJson"] == PROFILE_JSON
+
+
+def test_collect_with_errors_is_not_saved():
+    service = CollectService(errors=["课表“周一”的课程数量与关联时间表的上课时段数量不一致"])
+    text = run(collect_profiles(service, BINDING, save=True))
+    assert "需在 WebUI 档案页修正后保存" in text
+    assert all(call[0] != "PUT" for call in service.calls)
+
+
+def test_temp_layer_mode_ignores_sections_and_passes_replace_flag():
+    service = FakeService()
+    run(apply_profile(service, BINDING, "高一1班", "临时层", sections="作息", replace_temp_layers=True))
+    body = service.calls[-1][2]
+    assert body["mode"] == 4 and body["sections"] == 0 and body["replaceExistingTempLayers"] is True
+    run(apply_profile(service, BINDING, "高一1班", "更新", replace_temp_layers=True))
+    assert service.calls[-1][2]["replaceExistingTempLayers"] is False
