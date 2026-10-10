@@ -54,7 +54,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 | 11 | 升级 ClassIsland | 无 |
 | 20 | 重启 ClassIsland（不重启 Windows） | 无 |
 | 13 / 14 / 15 | 安装 / 卸载 / 启停插件 | `pluginManagement`：`{"action":1 安装 \| 2 卸载 \| 3 启用 \| 4 禁用,"pluginIds":["…"],"restartAfter":false}` |
-| 16 | 远程插件管理策略 | `pluginManagementPolicy`：`{"allowRemoteInstall":true,"allowRemoteUninstall":true}` |
+| 16 | 远程插件管理策略（WebUI 已不再提供入口，仅为旧客户端保留） | `pluginManagementPolicy`：`{"allowRemoteInstall":true,"allowRemoteUninstall":true}` |
 | 17 | 分发 ClassIsland 档案 | `profileDistribution`，见下 |
 | 18 | 新增或替换时间表 | `timeLayoutUpdate`，见下 |
 | 19 | 加入 ClassIsland 集控 | `managementJoin`：`{"presetJson":"<ManagementPreset.json 内容>"}` |
@@ -92,7 +92,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 **谁能改**：系统管理员可以改任意班级；班主任只能改系统管理员逐个开放给班级自行管理的插件（分组的 `allowClassAdmin` 为 `true`），且本班有“扩展”权限（128），只作用于自己担任班主任的班级，否则 `403`。新插件默认都不开放。
 
-**开放或收回（仅系统管理员）**：`PUT /api/extension-groups/{groupId}/class-admin-access`，请求体 `{"allowClassAdmin":true}`；对全部班级生效，插件尚未上报时也可以先设置。开放后班主任的 WebUI 侧栏出现“扩展插件”入口，只列出已开放的插件。
+**开放或收回（仅系统管理员）**：`PUT /api/extension-groups/{groupId}/class-admin-access`，请求体 `{"allowClassAdmin":true}`；对全部班级生效，插件尚未上报时也可以先设置。开放后班主任的 WebUI 班级区侧栏出现“扩展插件”入口，只列出已开放的插件，且只修改当前班级。系统管理员在管理区的“插件批量设置”中按班级、分组或具体设备统一下发。
 
 **多个班级**：没有批量接口，按班循环调用上面的 `PUT`，并逐班汇报结果；某班返回“没有上报该扩展分组”表示那台教室电脑没装这个插件。
 
