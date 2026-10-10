@@ -68,7 +68,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 
 ## 3. 查看（所有角色）
 
-以下请求都带 `?classId=<id>`，班级 ID 取自 `classes[]`；省略时服务端使用该账号的默认班级。
+以下请求都带 `?classId=<id>`，班级 ID 取自 `classes[]`；省略时服务端使用该账号的第一个可访问班级。服务端没有“默认班级”，账号不属于任何班级时 `classes[]` 为空。
 
 - `GET /api/me/classes`：列出可访问的班级。
 - `GET /api/schedule?classId=…`：今天起七天的课表。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。

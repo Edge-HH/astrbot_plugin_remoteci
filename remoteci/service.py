@@ -407,13 +407,75 @@ class RemoteCiService:
         body = dict(payload or {})
         body["command"] = command
         data = await self._call(binding, "POST", "/api/commands", params={"classId": (cls or {}).get("id")}, body=body)
-        name = (cls or {}).get("name") or "默认班级"
+        name = (cls or {}).get("name") or "当前班级"
         if isinstance(data, dict):
             ok = data.get("success", True)
             msg = data.get("message") or ("已完成" if ok else "执行失败")
             extra = f"\n{data['data']}" if data.get("data") else ""
             return f"{name}：{'✅' if ok else '❌'} {msg}{extra}"
         return f"{name}：已发送"
+
+    # ---------- 班级信息：班名与头像（系统管理员或获准的本班班主任） ----------
+
+    def _require_class(self, binding: dict, class_ref: str | None) -> dict:
+        cls = self.resolve_class(binding, class_ref)
+        if cls is None:
+            classes = (binding.get("profile") or {}).get("classes") or []
+            raise ServiceError("请指定班级。你可访问的班级：" + ("、".join(c.get("name", "") for c in classes) or "无"))
+        return cls
+
+    async def _after_class_change(self, binding: dict) -> None:
+        self._drop_cache(binding["key"])
+        try:
+            await self._refresh_profile(binding)
+            await self.store.save()
+        except RemoteCiError:
+            pass
+
+    async def _class_info_call(self, binding: dict, method: str, path: str, **kwargs) -> Any:
+        try:
+            return await self._upload(binding, method, path, **kwargs) if "content" in kwargs \
+                else await self._call(binding, method, path, **kwargs)
+        except RemoteCiError as ex:
+            if ex.status == 403:
+                raise ServiceError("没有权限修改这个班级：需要系统管理员，或系统管理员允许改名/改头像的本班班主任。") from ex
+            raise
+
+    async def _upload(self, binding: dict, method: str, path: str, *, content: bytes, headers: dict) -> Any:
+        """以原始字节调用接口（班级头像）；测试中可整体替换。"""
+        try:
+            return await self.client.request(binding, method, path, content=content, headers=headers,
+                                             on_auth_changed=self._save_auth)
+        except RemoteCiError as ex:
+            if ex.status == 401 and binding.get("key") in self.store.bindings:
+                await self._mark_auth_failed(binding, str(ex))
+            raise
+
+    async def rename_class(self, user: ChatUser, class_ref: str | None, new_name: str) -> str:
+        binding = self.require_binding(user)
+        new_name = (new_name or "").strip()
+        if not new_name or len(new_name) > 40:
+            raise ServiceError("班级名称需为 1-40 个字符。")
+        cls = self._require_class(binding, class_ref)
+        await self._class_info_call(binding, "PUT", f"/api/classes/{cls['id']}/info", body={"name": new_name})
+        await self._after_class_change(binding)
+        return f"已把“{cls.get('name')}”改名为“{new_name}”。"
+
+    async def set_class_avatar(self, user: ChatUser, class_ref: str | None, image: bytes) -> str:
+        binding = self.require_binding(user)
+        cls = self._require_class(binding, class_ref)
+        content, content_type = prepare_avatar(image)
+        await self._class_info_call(binding, "PUT", f"/api/classes/{cls['id']}/avatar",
+                                    content=content, headers={"X-Avatar-Type": content_type})
+        await self._after_class_change(binding)
+        return f"已更新“{cls.get('name')}”的班级头像。"
+
+    async def clear_class_avatar(self, user: ChatUser, class_ref: str | None) -> str:
+        binding = self.require_binding(user)
+        cls = self._require_class(binding, class_ref)
+        await self._class_info_call(binding, "DELETE", f"/api/classes/{cls['id']}/avatar")
+        await self._after_class_change(binding)
+        return f"已清除“{cls.get('name')}”的班级头像，各端将显示默认的班级图标。"
 
     async def notify(self, user: ChatUser, class_ref: str | None, message: str, title: str = "") -> str:
         sender = user.sender_name or "老师"
@@ -839,6 +901,50 @@ class RemoteCiService:
             raise ServiceError("发送失败：平台未找到该会话，或机器人已不在该会话中")
         await self.store.save()
         return text
+
+
+AVATAR_MAX_BYTES = 256 * 1024
+AVATAR_TARGET_SIDE = 256
+
+
+def _sniff_image_type(data: bytes) -> str | None:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def prepare_avatar(image: bytes) -> tuple[bytes, str]:
+    """把聊天图片转为服务端接受的头像：PNG/JPEG/WebP 且不超过 256 KB；需要时用 Pillow 缩放为 256px 的正方形。"""
+    if not image:
+        raise ServiceError("没有收到图片：请把图片和指令放在同一条消息里发送，或回复一张图片。")
+    content_type = _sniff_image_type(image)
+    if content_type and len(image) <= AVATAR_MAX_BYTES:
+        return image, content_type
+    try:
+        from io import BytesIO
+
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError as ex:
+        raise ServiceError("图片需为不超过 256 KB 的 PNG/JPEG/WebP；当前环境没有 Pillow，无法自动压缩，请先裁剪压缩后再发送。") from ex
+    try:
+        with Image.open(BytesIO(image)) as src:
+            img = src.convert("RGBA")
+    except Exception as ex:  # noqa: BLE001 - Pillow 对损坏文件抛出多种异常
+        raise ServiceError("无法识别这张图片，请换一张 PNG/JPEG/WebP 图片。") from ex
+    side = min(img.size)
+    left, top = (img.width - side) // 2, (img.height - side) // 2
+    img = img.crop((left, top, left + side, top + side)).resize((AVATAR_TARGET_SIDE, AVATAR_TARGET_SIDE))
+    out = BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    if out.tell() > AVATAR_MAX_BYTES:
+        out = BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=85)
+        return out.getvalue(), "image/jpeg"
+    return out.getvalue(), "image/png"
 
 
 def validate_reminder(key: str, value: Any) -> Any:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Awaitable, Callable
+
 from .service import ChatUser, RemoteCiService, ServiceError
 from .makeup import run_makeup_command
 from .profiles import run_profile_command
@@ -21,6 +23,9 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 班级 [班级名] [日期]   班级课表
 /rci 状态 [班级名]   教室当前课堂状态
 /rci 班级列表   可访问的班级
+/rci 班级改名 [班级名] <新名称>   修改班级名称（管理员、获准的班主任）
+/rci 班级头像 [班级名]   附带或回复一张图片，设为班级头像
+/rci 班级头像 清除 [班级名]   清除头像，改为显示班级图标
 /rci 假期   今天是否因节假日暂停推送
 /rci 调休   近期假期与调休补课安排
 /rci 调休 2026-10-10 周三|不补课|自动   修改补课安排（管理员）
@@ -56,6 +61,8 @@ SUBCOMMANDS = {
     "class": "class", "班级": "class", "班级课表": "class",
     "state": "state", "状态": "state",
     "classes": "classes", "班级列表": "classes",
+    "rename": "rename", "班级改名": "rename", "改班名": "rename", "改名": "rename",
+    "avatar": "avatar", "班级头像": "avatar", "班头像": "avatar", "头像": "avatar",
     "remind": "remind", "提醒": "remind", "reminder": "remind",
     "notify": "notify", "通知": "notify",
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
@@ -87,7 +94,9 @@ def strip_command(text: str) -> list[str]:
     return tokens
 
 
-async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> str:
+async def run_command(service: RemoteCiService, user: ChatUser, text: str,
+                      image_loader: Callable[[], Awaitable[bytes | None]] | None = None) -> str:
+    """image_loader 读取本条消息（或被回复消息）中的第一张图片，供“班级头像”使用。"""
     tokens = strip_command(text)
     if not tokens:
         return HELP
@@ -134,6 +143,18 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str) -> st
                 return "管理员已全局暂停主动推送。"
             return (f"今天：{reason or '节假日'}，主动推送暂停。" if h_today else
                     "今天正常推送" + (f"（{reason}）" if reason else "") + "。") + ("明天放假，不推送次日日程。" if h_tomorrow else "")
+        if action == "rename":
+            if not args:
+                return "用法：/rci 班级改名 [班级名] <新名称>"
+            class_ref = " ".join(args[:-1]) or None
+            return await service.rename_class(user, class_ref, args[-1])
+        if action == "avatar":
+            if args and args[0] in ("清除", "删除", "clear", "remove"):
+                return await service.clear_class_avatar(user, " ".join(args[1:]) or None)
+            image = await image_loader() if image_loader else None
+            if not image:
+                return "请把图片和“/rci 班级头像 [班级名]”放在同一条消息里发送，或回复一张图片后发送该指令。"
+            return await service.set_class_avatar(user, " ".join(args) or None, image)
         if action == "remind":
             return await _remind(service, user, args)
         if action == "notify":

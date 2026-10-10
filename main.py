@@ -6,9 +6,11 @@ AstrBot 相关的胶水代码都在这里：指令、LLM 工具（自然语言�
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
+import aiohttp
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -36,6 +38,7 @@ except ImportError:  # 旧版 Dashboard（Quart）
 PLUGIN = "astrbot_plugin_remoteci"
 SKILL_DIR = Path(__file__).parent / "remoteci" / "skill"
 QQ_OFFICIAL = {"qq_official", "qq_official_webhook"}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def _data_dir() -> Path:
@@ -116,7 +119,7 @@ class RemoteCiPlugin(Star):
         user = self._user(event)
         await self._remember(event, user)
         try:
-            text = await run_command(self.service, user, event.message_str)
+            text = await run_command(self.service, user, event.message_str, lambda: self._first_image(event))
         except RemoteCiError as ex:
             text = f"RemoteCI 请求失败：{ex}"
         except Exception as ex:  # noqa: BLE001
@@ -124,6 +127,50 @@ class RemoteCiPlugin(Star):
             text = f"RemoteCI 插件出错：{ex}"
         yield event.plain_result(text)
         event.stop_event()
+
+    # ---------- 图片读取（班级头像） ----------
+
+    async def _first_image(self, event: AstrMessageEvent) -> bytes | None:
+        """读取本条消息里的第一张图片；没有时再看被回复的消息。"""
+        try:
+            chain = list(event.get_messages())
+        except Exception:  # noqa: BLE001
+            return None
+        images = [c for c in chain if isinstance(c, Comp.Image)]
+        for comp in chain:
+            if isinstance(comp, Comp.Reply) and getattr(comp, "chain", None):
+                images.extend(c for c in comp.chain if isinstance(c, Comp.Image))
+        for image in images:
+            data = await self._image_bytes(image)
+            if data:
+                return data
+        return None
+
+    async def _image_bytes(self, image) -> bytes | None:
+        convert = getattr(image, "convert_to_base64", None)
+        if convert:
+            try:
+                return base64.b64decode(await convert())
+            except Exception:  # noqa: BLE001 - 不同平台适配器的图片来源不同，失败时再按 url/file 读取
+                pass
+        for ref in (getattr(image, "url", None), getattr(image, "file", None)):
+            if not ref or not isinstance(ref, str):
+                continue
+            if ref.startswith("base64://"):
+                return base64.b64decode(ref[len("base64://"):])
+            if ref.startswith(("http://", "https://")):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(ref, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                            if resp.status == 200 and (resp.content_length or 0) <= MAX_IMAGE_BYTES:
+                                data = await resp.content.read(MAX_IMAGE_BYTES + 1)
+                                return data if len(data) <= MAX_IMAGE_BYTES else None
+                except (aiohttp.ClientError, TimeoutError):
+                    continue
+            path = Path(ref.removeprefix("file:///"))
+            if path.is_file() and path.stat().st_size <= MAX_IMAGE_BYTES:
+                return path.read_bytes()
+        return None
 
     # ---------- 自然语言（LLM 工具） ----------
 
@@ -388,6 +435,34 @@ class RemoteCiPlugin(Star):
             title(string): 通知标题，可留空
         """
         return await self._tool(event, lambda user: self.service.notify(user, class_name, message, title))
+
+    @filter.llm_tool(name="remoteci_rename_class")
+    async def tool_rename_class(self, event: AstrMessageEvent, new_name: str, class_name: str = ""):
+        """修改班级名称。需要系统管理员，或系统管理员允许改班名的本班班主任；没有权限时如实告诉用户。
+
+        Args:
+            new_name(string): 新的班级名称，1-40 个字符
+            class_name(string): 要改名的班级（当前名称），只有一个班级时可留空
+        """
+        return await self._tool(event, lambda user: self.service.rename_class(user, class_name or None, new_name))
+
+    @filter.llm_tool(name="remoteci_set_class_avatar")
+    async def tool_set_class_avatar(self, event: AstrMessageEvent, class_name: str = "", clear: bool = False):
+        """把用户在本条消息中发送（或回复）的图片设为班级头像；clear=true 时清除头像，改为显示默认班级图标。
+        需要系统管理员，或系统管理员允许改头像的本班班主任。用户没有附带图片时，请对方连同图片一起发送。
+
+        Args:
+            class_name(string): 班级名称，只有一个班级时可留空
+            clear(boolean): 是否清除头像
+        """
+        async def run(user):
+            if clear:
+                return await self.service.clear_class_avatar(user, class_name or None)
+            image = await self._first_image(event)
+            if not image:
+                return "没有在这条消息里找到图片：请把图片和要求一起发送，或回复那张图片。"
+            return await self.service.set_class_avatar(user, class_name or None, image)
+        return await self._tool(event, run)
 
     @filter.llm_tool(name="remoteci_class_command")
     async def tool_class_command(self, event: AstrMessageEvent, class_name: str, command: int,

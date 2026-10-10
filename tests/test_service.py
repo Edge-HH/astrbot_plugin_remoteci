@@ -29,6 +29,11 @@ class FakeServer:
             return self.class_schedule
         if path == "/api/commands":
             return {"success": True, "code": "OK", "message": "已显示"}
+        if path.startswith("/api/classes/") and method in ("PUT", "DELETE"):
+            if getattr(self, "deny_class_info", False):
+                from remoteci.client import RemoteCiError
+                raise RemoteCiError(403, "权限不足")
+            return None
         raise AssertionError(path)
 
 
@@ -164,4 +169,43 @@ def test_dangerous_command_requires_confirmation(tmp_path):
         await run_command(service, PRIVATE, "rci 通知 高一 " + "长" * 31)
         body = [c for c in fake.calls if c[1] == "/api/commands"][-1][3]
         assert body["notification"]["isRollingEnabled"] is True
+    asyncio.run(run())
+
+
+PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d4944415478da63f8cfc0f01f0005000201a1d2b3d10000000049454e44ae426082")
+
+
+def test_class_rename_and_avatar_commands(tmp_path):
+    async def run():
+        clock = [datetime(2026, 10, 9, 12, 0, tzinfo=TZ)]
+        service, fake, _ = make(tmp_path, clock, role_kind=4)
+        await run_command(service, PRIVATE, "rci 绑定 rci_x")
+
+        reply = await run_command(service, PRIVATE, "rci 班级改名 高一(1)班 高一(一)班")
+        assert "改名为“高一(一)班”" in reply
+        assert ("PUT", f"/api/classes/{CLASS_A}/info", None, {"name": "高一(一)班"}) in fake.calls
+
+        uploads = []
+
+        async def fake_upload(binding, method, path, *, content, headers):
+            uploads.append((method, path, content, headers))
+        service._upload = fake_upload  # noqa: SLF001 - 替换上传层
+
+        async def no_image():
+            return None
+        assert "图片" in await run_command(service, PRIVATE, "rci 班级头像", no_image)
+
+        async def png():
+            return PNG_1PX
+        assert "已更新" in await run_command(service, PRIVATE, "rci 班级头像", png)
+        assert uploads == [("PUT", f"/api/classes/{CLASS_A}/avatar", PNG_1PX, {"X-Avatar-Type": "image/png"})]
+
+        assert "已清除" in await run_command(service, PRIVATE, "rci 班级头像 清除")
+        assert ("DELETE", f"/api/classes/{CLASS_A}/avatar", None, None) in fake.calls
+
+        # 没有权限时给出可读的说明，而不是原始 403。
+        fake.deny_class_info = True
+        assert "没有权限修改这个班级" in await run_command(service, PRIVATE, "rci 班级改名 新名字")
     asyncio.run(run())
