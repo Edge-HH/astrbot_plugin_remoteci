@@ -86,11 +86,13 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 其他 ClassIsland 插件可以声明“插件设置”（例如提醒间隔、播报音色）。修改设置不走 `/api/commands`（命令 `24` 在该接口和广播接口都会被拒绝），使用专用接口：
 
-1. `GET /api/extension-groups?classId=…` 读取分组。每个分组有 `id`、`displayName`、`settings[]`（字段 `key`、`label`、`type` 为 `1` 文本 / `2` 数字 / `3` 开关 / `4` 选项、`options` 与对应显示名 `optionLabels`、`min`、`max`、`required`）和当前值 `values`。
+1. `GET /api/extension-groups?classId=…` 读取分组。每个分组有 `id`、`displayName`、`settings[]`（字段 `key`、`label`、`type` 为 `1` 文本 / `2` 数字 / `3` 开关 / `4` 选项、`options` 与对应显示名 `optionLabels`、`min`、`max`、`required`）、当前值 `values`（无权修改该插件时为 `null`）、`canEditSettings`（当前账号能否修改）和 `allowClassAdmin`（该插件是否已开放给班主任）。
 2. `PUT /api/classes/{classId}/extension-groups/{groupId}/settings`，请求体 `{"values":{"interval":"15"}}`。只放要修改的字段，其余保持原值；值一律是字符串，开关用 `"true"`/`"false"`，选项填 `options` 里的原值而不是显示名。
 3. 返回与 `/api/commands` 相同的 `CommandResult`；`400` 表示字段或取值不合法，按 `message` 修正；`202` 且 `code` 为 `QUEUED` 表示该班插件离线，设置已保存，插件上线后会自动补发，如实告诉用户“尚未生效、上线后自动生效”。
 
-**谁能改**：系统管理员可以改任意班级；班主任只有在系统管理员开启“修改本班的扩展插件设置”（`GET /api/settings/class-self-service` 的 `canEditExtensionSettings`）且本班有“扩展”权限（128）时才能改自己班级，否则 `403`。
+**谁能改**：系统管理员可以改任意班级；班主任只能改系统管理员逐个开放给班级自行管理的插件（分组的 `allowClassAdmin` 为 `true`），且本班有“扩展”权限（128），只作用于自己担任班主任的班级，否则 `403`。新插件默认都不开放。
+
+**开放或收回（仅系统管理员）**：`PUT /api/extension-groups/{groupId}/class-admin-access`，请求体 `{"allowClassAdmin":true}`；对全部班级生效，插件尚未上报时也可以先设置。开放后班主任的 WebUI 侧栏出现“扩展插件”入口，只列出已开放的插件。
 
 **多个班级**：没有批量接口，按班循环调用上面的 `PUT`，并逐班汇报结果；某班返回“没有上报该扩展分组”表示那台教室电脑没装这个插件。
 

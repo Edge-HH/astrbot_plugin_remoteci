@@ -113,7 +113,7 @@ ID,用户名,班级,角色,密码
 | 访客页自动进入 | `GET` 或 `PUT /api/visitor`，请求体 `{"autoEnter":true}`；人员管理即可调用 |
 | 通知是否署名 | `GET /api/settings/notifications` 任何登录账号都可读取；`PUT` 的请求体为 `{"forceSenderInTitle":true}` |
 | 课表自动拉取间隔 | `GET` 或 `PUT /api/settings/schedule-pull`，请求体 `{"intervalMinutes":30}`；全局设置，只有系统管理员能 `PUT` |
-| 班主任权限（班级自治） | `GET` 任何登录账号可读；`PUT /api/settings/class-self-service`，请求体 `{"canRename":true,"canChangeAvatar":true,"canPullSchedule":true,"canEditExtensionSettings":false}`，四项都要填，对全部班级生效 |
+| 班主任权限（班级自治） | `GET` 任何登录账号可读；`PUT /api/settings/class-self-service`，请求体 `{"canRename":true,"canChangeAvatar":true,"canPullSchedule":true}`，三项都要填，对全部班级生效；扩展插件设置改为逐个插件开放，见 [control.md](control.md) 的“扩展插件设置” |
 | 服务端状态 | `GET /api/admin/status`，需要“概览”权限 |
 | 系统信息 | `GET /api/admin/system` |
 | 检查更新 | `POST /api/admin/updates/check` |

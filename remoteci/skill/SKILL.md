@@ -74,7 +74,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 - `GET /api/schedule?classId=…`：今天起七天的课表。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。
 - `GET /api/state?classId=…`：当前课堂状态。`currentState` 取值：`1` 上课、`2` 课间、`3` 放学、`4` 预备、`0` 无课；另有 `currentSubject`、`nextClassSubject`、`onClassLeftTime`。
 - `GET /api/extensions?classId=…`：本班可运行的插件扩展。
-- `GET /api/extension-groups?classId=…`：本班设备上报的扩展插件分组及其设置字段；有权修改设置时还返回当前值 `values` 和 `canEditSettings: true`。修改方法见 [control.md](references/control.md#扩展插件设置)。
+- `GET /api/extension-groups?classId=…`：本班设备上报的扩展插件分组及其设置字段；有权修改该插件设置时还返回当前值 `values` 和 `canEditSettings: true`；`allowClassAdmin` 表示该插件是否已开放给班主任自行管理。修改与开放方法见 [control.md](references/control.md#扩展插件设置)。
 
 `404 尚无课表` 或 `404 尚无课程状态` 表示这个班的 ClassIsland 插件还没把数据同步到服务端，可能是插件离线或服务端刚重启，请用户稍后再试。
 
