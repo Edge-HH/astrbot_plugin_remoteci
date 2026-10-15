@@ -209,3 +209,50 @@ def test_class_rename_and_avatar_commands(tmp_path):
         fake.deny_class_info = True
         assert "没有权限修改这个班级" in await run_command(service, PRIVATE, "rci 班级改名 新名字")
     asyncio.run(run())
+
+
+def test_class_schedule_from_profile_is_marked_as_estimate(tmp_path):
+    async def run():
+        clock = [datetime(2026, 10, 9, 7, 1, tzinfo=TZ)]
+        service, fake, _ = make(tmp_path, clock)
+        await run_command(service, PRIVATE, "rci 绑定 rci_x")
+        fake.class_schedule = {"source": "profile", "days": [{"date": "2026-10-09", "courses": [
+            {"index": 0, "label": "第1节", "subject": "语文", "startTime": "08:00", "endTime": "08:40", "enabled": True,
+             "teacher": "李老师/张老师"}]}]}
+        reply = await run_command(service, PRIVATE, "rci 班级")
+        assert "语文" in reply and "按班级档案推算" in reply
+
+        fake.class_schedule = {"days": fake.class_schedule["days"]}
+        service._cache.clear()
+        assert "按班级档案推算" not in await run_command(service, PRIVATE, "rci 班级")
+    asyncio.run(run())
+
+
+def test_my_schedule_from_profile_is_marked_and_not_reported_as_change(tmp_path):
+    async def run():
+        clock = [datetime(2026, 10, 9, 6, 50, tzinfo=TZ)]
+        service, fake, sent = make(tmp_path, clock)
+        estimated = day_entry("2026-10-09", [(0, "数学", "08:00", "08:40")])
+        estimated["items"][0]["source"] = "profile"
+        fake.my = {"days": [estimated]}
+        await run_command(service, PRIVATE, "rci 绑定 rci_secret")
+        reply = await run_command(service, PRIVATE, "rci 今天")
+        assert "数学" in reply and "按班级档案推算" in reply
+
+        await service.tick()  # 建立基线（推算课表）
+        # 插件首次同步：实际课表与推算不同，也不提醒“课程变动”。
+        fake.my = {"days": [day_entry("2026-10-09", [(0, "物理", "08:00", "08:40")])]}
+        service._cache.clear()
+        service._last_poll.clear()
+        clock[0] = clock[0].replace(minute=55)
+        await service.tick()
+        assert not any("课程变动" in text for _, text in sent)
+
+        # 之后的实际课表变动照常提醒。
+        fake.my = {"days": [day_entry("2026-10-09", [(0, "化学", "08:00", "08:40")])]}
+        service._cache.clear()
+        service._last_poll.clear()
+        clock[0] = clock[0].replace(minute=58)
+        await service.tick()
+        assert any("物理 → 化学" in text for _, text in sent)
+    asyncio.run(run())

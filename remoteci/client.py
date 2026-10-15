@@ -76,7 +76,7 @@ class RemoteCiClient:
             "username": username, "password": password, "deviceName": DEVICE_NAME,
         })
         if isinstance(data, dict) and data.get("passwordPending"):
-            raise RemoteCiError(400, "账号尚未激活：请先在 RemoteCI WebUI 登录页完成首次设置密码")
+            raise RemoteCiError(400, "账号尚未设置密码：请先在 RemoteCI WebUI 登录页或手机 App 留空密码登录，完成首次设置密码")
         if not isinstance(data, dict) or not data.get("accessToken"):
             raise RemoteCiError(500, "登录响应缺少 accessToken")
         return self._session_auth(data)

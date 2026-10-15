@@ -1,7 +1,9 @@
 """课表数据的归一化、格式化与变更比对。
 
 RemoteCI 有两种课表：
-- 班级课表 `GET /api/schedule`：days[].courses[]，每节课带 teacher。
+- 班级课表 `GET /api/schedule`：days[].courses[]，每节课带 teacher。教室端插件从未同步过课表时，
+  服务端按班级档案推算，课表带 `source: "profile"`；我的日程中这类班级的 item 同样带 `source: "profile"`。
+  推算的课程标记为 estimated，只供查看，不参与变动比对。
 - 我的日程 `GET /api/me/schedule`：days[].items[]（按班级分组）.courses[]。
 这里把两者都整理成按日期分组的 `Lesson` 列表，供格式化、提醒和比对共用。
 """
@@ -13,6 +15,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 WEEKDAYS = "一二三四五六日"
+
+# 服务端按班级档案推算的课表来源标记（GET /api/schedule 的 source 字段）。
+SOURCE_PROFILE = "profile"
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,8 @@ class Lesson:
     class_id: str = ""
     class_name: str = ""
     teacher: str = ""
+    # 服务端按班级档案推算（该班插件从未同步过课表），可能与教室端实际课表不同。
+    estimated: bool = False
 
     def start_time(self) -> time | None:
         return parse_clock(self.start)
@@ -89,6 +96,7 @@ def lessons_from_class_schedule(bundle: dict, class_id: str = "", class_name: st
                 class_id=class_id or str(bundle.get("classId") or ""),
                 class_name=class_name,
                 teacher=c.get("teacher") or "",
+                estimated=bundle.get("source") == SOURCE_PROFILE,
             )
             for c in day.get("courses") or []
             if c.get("enabled", True)
@@ -116,6 +124,7 @@ def lessons_from_my_schedule(response: dict) -> dict[str, list[Lesson]]:
                     class_id=str(item.get("classId") or ""),
                     class_name=item.get("className") or "",
                     teacher=c.get("teacher") or "",
+                    estimated=item.get("source") == SOURCE_PROFILE,
                 ))
         result[day_date] = sorted(lessons, key=_lesson_order)
     return result
@@ -182,6 +191,7 @@ def to_snapshot(days: dict[str, list[Lesson]]) -> dict[str, dict[str, dict]]:
         day: {snapshot_key(x): {
             "index": x.index, "label": x.label, "subject": x.subject, "start": x.start, "end": x.end,
             "class_id": x.class_id, "class_name": x.class_name, "teacher": x.teacher,
+            "estimated": x.estimated,
         } for x in lessons}
         for day, lessons in days.items()
     }
@@ -201,7 +211,10 @@ def diff_snapshots(old: dict, new: dict, from_date: str, *, track_teacher: bool 
     """比较两次快照中同时存在、且不早于 from_date 的日期。
 
     服务端课表是滚动七天窗口，新滚入或滚出的日期不算变动。
+    任一快照中按档案推算（estimated）的班级整体跳过：推算课表只是预估，插件同步实际课表时不算变动。
     """
+    estimated = {lesson.get("class_id") for snapshot in (old, new) for lessons in snapshot.values()
+                 for lesson in lessons.values() if lesson.get("estimated")}
     changes: list[Change] = []
     for day in sorted(set(old) & set(new)):
         if day < from_date:
@@ -209,6 +222,8 @@ def diff_snapshots(old: dict, new: dict, from_date: str, *, track_teacher: bool 
         before, after = old[day], new[day]
         for key in sorted(set(before) | set(after), key=lambda k: _index_of(before.get(k) or after.get(k))):
             a, b = before.get(key), after.get(key)
+            if (a or b).get("class_id") in estimated:
+                continue
             ref = b or a
             period = ref.get("label") or f"第{ref.get('index', 0) + 1}节"
             cname = ref.get("class_name") or ""

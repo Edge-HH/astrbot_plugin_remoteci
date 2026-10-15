@@ -278,10 +278,17 @@ class RemoteCiService:
         return sch.lessons_from_my_schedule(data or {})
 
     async def class_days(self, binding: dict, cls: dict | None, ttl: float = 120) -> dict[str, list[sch.Lesson]]:
+        days, _ = await self.class_schedule(binding, cls, ttl)
+        return days
+
+    async def class_schedule(self, binding: dict, cls: dict | None,
+                             ttl: float = 120) -> tuple[dict[str, list[sch.Lesson]], str | None]:
+        """班级课表及其来源：插件尚未同步时服务端按班级档案推算，source 为 "profile"。"""
         class_id = (cls or {}).get("id")
         data = await self._cached(binding, f"class:{class_id}",
                                   lambda: self._call(binding, "GET", "/api/schedule", params={"classId": class_id}), ttl)
-        return sch.lessons_from_class_schedule(data or {}, class_id or "", (cls or {}).get("name", ""))
+        days = sch.lessons_from_class_schedule(data or {}, class_id or "", (cls or {}).get("name", ""))
+        return days, (data or {}).get("source") if isinstance(data, dict) else None
 
     def parse_day(self, text: str | None) -> list[date] | str:
         """“今天/明天/后天/本周/周三/2026-10-05/10-05” → 日期列表；返回字符串表示 week。"""
@@ -314,15 +321,23 @@ class RemoteCiService:
         if not self.has_personal_schedule(binding):
             return "“我的日程”仅对老师和班主任账号开放。学生或其他账号可以用“/rci 班级 [班级名] [日期]”查看班级课表。"
         days = await self.my_days(binding)
-        return self._render_days(days, day, title="我的日程", show_class=True, show_teacher=False,
-                                 empty_hint="没有你的课程。若一直为空，请确认 RemoteCI 显示名与课表中的任课教师名完全一致。")
+        text = self._render_days(days, day, title="我的日程", show_class=True, show_teacher=False,
+                                 empty_hint="没有你的课程。若一直为空，请确认 RemoteCI 显示名与课表中的任课教师名完全一致"
+                                            "（一科多位老师可写成“张三/李四”）。")
+        estimated = sorted({x.class_name for lessons in days.values() for x in lessons if x.estimated})
+        if estimated:
+            text += f"\n\n（{'、'.join(estimated)}的教室端插件从未同步过课表，这些课程按班级档案推算，可能与实际不同。）"
+        return text
 
     async def query_class_schedule(self, user: ChatUser, class_ref: str | None = None, day: str | None = None) -> str:
         binding = self.require_binding(user)
         cls = self.resolve_class(binding, class_ref)
-        days = await self.class_days(binding, cls)
+        days, source = await self.class_schedule(binding, cls)
         name = (cls or {}).get("name") or "默认班级"
-        return self._render_days(days, day, title=f"{name}课表", show_class=False, show_teacher=True)
+        text = self._render_days(days, day, title=f"{name}课表", show_class=False, show_teacher=True)
+        if source == sch.SOURCE_PROFILE:
+            text += "\n\n（教室端插件从未同步过课表，以上按班级档案推算，可能与教室端实际课表不同。）"
+        return text
 
     def _render_days(self, days, day, *, title, show_class, show_teacher, empty_hint="没有课程") -> str:
         today = self.today()
@@ -656,9 +671,15 @@ class RemoteCiService:
                     title="【课程变动】你的课有调整", show_class=True, track_teacher=False)
                 if role == ROLE_HEAD:
                     for cls in self.head_classes(session, binding):
-                        cdays = await self.class_days(binding, cls, ttl=0)
+                        cdays, source = await self.class_schedule(binding, cls, ttl=0)
+                        snap_key = f"class:{binding['key']}:{cls['id']}"
+                        if source == sch.SOURCE_PROFILE:
+                            # 档案推算的课表只是预估：不提醒变动，插件同步实际课表后重新建立比对基线。
+                            if self.store.snapshots.pop(snap_key, None) is not None:
+                                await self.store.save_snapshots()
+                            continue
                         dirty |= await self._detect_changes(
-                            umo, f"class:{binding['key']}:{cls['id']}", cdays,
+                            umo, snap_key, cdays,
                             enabled=prefs["class_change_enabled"],
                             title=f"【班级课表变动】{cls.get('name')}", show_class=False, track_teacher=True)
         return dirty

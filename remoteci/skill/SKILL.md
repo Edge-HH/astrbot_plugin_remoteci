@@ -71,7 +71,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 以下请求都带 `?classId=<id>`，班级 ID 取自 `classes[]`；省略时服务端使用该账号的第一个可访问班级。服务端没有“默认班级”，账号不属于任何班级时 `classes[]` 为空。
 
 - `GET /api/me/classes`：列出可访问的班级。
-- `GET /api/schedule?classId=…`：今天起七天的课表。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。
+- `GET /api/schedule?classId=…`：今天起七天的课表。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。插件上线过的班级始终返回最后一次同步的课表（插件离线也一样）；插件从未同步过课表的班级由服务端按该班当前档案推算，此时返回 `"source":"profile"`：只是预估，回答时说明“按班级档案推算”，其 `revision` 不能用于换课。
 - `GET /api/state?classId=…`：当前课堂状态。`currentState` 取值：`1` 上课、`2` 课间、`3` 放学、`4` 预备、`0` 无课；另有 `currentSubject`、`nextClassSubject`、`onClassLeftTime`。
 - `GET /api/extensions?classId=…`：本班可运行的插件扩展。
 - `GET /api/extension-groups?classId=…`：本班设备上报的扩展插件分组及其设置字段；有权修改该插件设置时还返回当前值 `values` 和 `canEditSettings: true`；`allowClassAdmin` 表示该插件是否已开放给班主任自行管理。修改与开放方法见 [control.md](references/control.md#扩展插件设置)。
@@ -80,7 +80,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 
 **老师和班主任的“我的日程”**（全局 `roleKind` 为 `5` 或 `4` 时可用）：
 
-- `GET /api/me/schedule`：跨班聚合的七天日程。返回 `days[]`，每天的 `items[]` 按班级分组，含 `className` 和 `courses[]`。
+- `GET /api/me/schedule`：跨班聚合的七天日程。返回 `days[]`，每天的 `items[]` 按班级分组，含 `className` 和 `courses[]`。插件从未同步过课表的班级按档案推算，其 item 带 `"source":"profile"`，回答时说明是推算。
 - `GET /api/me/schedule/next`：返回 `current`（正在上的课）和 `next`（下一节），每项含 `className`、`course`、`startsAt`、`endsAt`。查询其他时刻时加 `?at=<ISO 8601>`，时间里的 `+` 写成 `%2B`。
 
 回答“下节课去哪”时包含班级、科目、节次和起止钟点；有 `current` 时先说现在正在上什么。`startTime`/`endTime` 是教室当地钟点，直接引用；`startsAt`/`endsAt` 只用来计算“还有多久”。
@@ -88,7 +88,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 日程为空时，按顺序排查，把第一个成立的原因告诉用户：
 
 1. 账号不是老师角色。
-2. 账号的 `displayName` 与课表里的教师名不一致。两者必须完全相同；多教师科目写成 `张三/李四` 时匹配其中一个即可。
+2. 账号的 `displayName` 与课表里的教师名不一致。两者必须完全相同；一科多位老师时教师名写成 `张三/李四`，每位老师都能匹配到这门课。分隔符可用 `/`、`、`、`,`、`;`、`|`、`&`、`+`、`\`（半角或全角均可），空格不算分隔符。
 3. 七天内已经没有这位老师的后续课程。
 4. 插件尚未同步课表。
 

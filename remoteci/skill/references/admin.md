@@ -82,7 +82,7 @@
 | 操作 | 请求 |
 | --- | --- |
 | 列表 | `GET /api/users`，返回 `id`、`username`、`displayName`、`role`、`roleId`、`roleName`、`grantedPermissions`、`effectivePermissions`、`enabled` |
-| 创建 | `POST /api/users`，请求体 `{"username":"wangming","displayName":"王明","password":"…","role":1,"roleId":"<角色 id>","grantedPermissions":0,"classId":"<班级 id>"}`；`classId` 可选，填写后账号以同一角色加入该班，省略则不加入任何班级（老师按课表姓名自动绑定任教班级，不必填写）；创建管理员时 `role` 为 `2` |
+| 创建 | `POST /api/users`，请求体 `{"username":"wangming","displayName":"王明","password":"…","role":1,"roleId":"<角色 id>","grantedPermissions":0,"classId":"<班级 id>"}`；`password` 可留空，账号首次在 WebUI 或手机 App 留空密码登录时自行设置；`classId` 可选，填写后账号以同一角色加入该班，省略则不加入任何班级（老师按课表姓名自动绑定任教班级，不必填写）；创建管理员时 `role` 为 `2` |
 | 编辑 | `PUT /api/users/{id}`，请求体 `{"displayName":"…","role":1,"roleId":"…","grantedPermissions":0,"enabled":true}` |
 | 重置密码 | `POST /api/users/{id}/password`，请求体 `{"password":"…"}` |
 | 删除 | `DELETE /api/users/{id}`，不能删除最后一个管理员，系统管理员账号任何人都不能删除 |
