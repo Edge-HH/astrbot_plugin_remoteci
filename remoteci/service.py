@@ -39,6 +39,10 @@ ROLE_NAMES = {ROLE_AUTO: "自动", ROLE_NONE: "不推送", ROLE_TEACHER: "老师
 DANGEROUS_COMMANDS = {5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23}
 # 与 RemoteCI 服务端 NotificationRequest.RollingSuggestionThreshold 一致。
 ROLLING_SUGGESTION_THRESHOLD = 30
+API_METHODS = {"GET", "POST", "PUT", "DELETE"}
+# remoteci_api 通用调用禁止访问的接口：凭据、会话、初始化与服务端更新由插件或用户本人在网页端处理。
+API_BLOCKED = ("/api/auth", "/api/setup", "/api/me/password", "/api/me/sessions", "/api/plugin/pair",
+               "/api/plugins/credentials", "/api/admin/updates")
 
 
 @dataclass
@@ -504,18 +508,26 @@ class RemoteCiService:
                        confirmed: bool = False) -> str:
         binding = self.require_binding(user)
         method = (method or "GET").upper()
-        if not path.startswith("/api/"):
-            raise ServiceError("path 必须以 /api/ 开头。")
-        if path.startswith("/api/auth/"):
-            raise ServiceError("认证接口由插件自动处理，不能直接调用。")
-        if path.startswith("/api/commands") and isinstance(body, dict) and body.get("command") == 8:
+        if method not in API_METHODS:
+            raise ServiceError("method 只能是 GET、POST、PUT 或 DELETE。")
+        path = (path or "").strip()
+        # 服务端路由不区分大小写，按小写比较；拒绝 ..、//、反斜杠、百分号编码与内嵌查询串，防止绕过下方的黑名单。
+        lower = path.lower()
+        if (not lower.startswith("/api/") or ".." in path or "//" in path or any(c in path for c in "\\%?#")
+                or any(c.isspace() or ord(c) < 32 for c in path)):
+            raise ServiceError("path 必须是以 /api/ 开头的普通路径（不含 ..、//、%、?、#），查询参数请放在 query_json。")
+        if any(lower == b or lower.startswith(b + "/") for b in API_BLOCKED):
+            raise ServiceError("认证、密码、会话、凭据、初始化与服务端更新接口不能通过插件调用，请在 RemoteCI 网页端操作。")
+        if lower.startswith("/api/commands") and isinstance(body, dict) and body.get("command") == 8:
             raise ServiceError("该控制命令当前不可用。")
-        risky = method == "DELETE" or "/restore" in path or path.startswith("/api/commands/broadcast") or (
-            path.startswith("/api/commands") and isinstance(body, dict) and body.get("command") in DANGEROUS_COMMANDS)
+        risky = (method == "DELETE" or "/restore" in lower or lower.startswith("/api/commands/broadcast")
+                 or lower.endswith("/password") or (method != "GET" and lower.startswith("/api/admin/"))
+                 or (lower.startswith("/api/commands") and isinstance(body, dict)
+                     and body.get("command") in DANGEROUS_COMMANDS))
         if risky and not confirmed:
-            raise ServiceError("这是删除、恢复、广播或高风险控制操作，请先向用户复述对象和内容，得到明确同意后以 confirmed=true 重试。")
+            raise ServiceError("这是删除、恢复、广播、重置密码、系统管理或高风险控制操作，请先向用户复述对象和内容，得到明确同意后以 confirmed=true 重试。")
         data = await self._call(binding, method, path, params=query, body=body)
-        if method != "GET" and path.startswith(("/api/me", "/api/classes", "/api/users")):
+        if method != "GET" and lower.startswith(("/api/me", "/api/classes", "/api/users")):
             self._drop_cache(binding["key"])
             try:
                 await self._refresh_profile(binding)

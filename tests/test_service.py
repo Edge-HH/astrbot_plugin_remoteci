@@ -256,3 +256,31 @@ def test_my_schedule_from_profile_is_marked_and_not_reported_as_change(tmp_path)
         await service.tick()
         assert any("物理 → 化学" in text for _, text in sent)
     asyncio.run(run())
+
+
+def test_generic_api_rejects_sensitive_or_obfuscated_paths(tmp_path):
+    async def run():
+        clock = [datetime(2026, 10, 9, 12, 0, tzinfo=TZ)]
+        service, fake, _ = make(tmp_path, clock)
+        await run_command(service, PRIVATE, "rci 绑定 rci_x")
+        before = len(fake.calls)
+        refused = [("POST", "/api/auth/refresh"), ("POST", "/API/Auth/login"), ("GET", "/api/me/sessions"),
+                   ("POST", "/api/me/password"), ("GET", "/api/plugins/credentials"), ("POST", "/api/plugin/pair"),
+                   ("POST", "/api/setup/system-admin"), ("POST", "/api/admin/updates/upload"),
+                   ("GET", "/api/classes/../auth/refresh"), ("GET", "/api//auth/refresh"),
+                   ("GET", "/api/%61uth/refresh"), ("GET", "/api/me?x=1"), ("PATCH", "/api/me"), ("GET", "/health")]
+        for method, path in refused:
+            try:
+                await service.call_api(PRIVATE, method, path, confirmed=True)
+                raise AssertionError(f"expected refusal: {method} {path}")
+            except Exception as ex:  # noqa: BLE001
+                assert "expected refusal" not in str(ex), str(ex)
+        for method, path in [("POST", "/api/users/u2/password"), ("POST", "/api/admin/holidays/refresh")]:
+            try:
+                await service.call_api(PRIVATE, method, path)
+                raise AssertionError("expected confirmation")
+            except Exception as ex:  # noqa: BLE001
+                assert "confirmed=true" in str(ex)
+        assert len(fake.calls) == before
+        assert "已显示" in await service.call_api(PRIVATE, "post", "/api/commands", {"command": 2}, {"classId": CLASS_A})
+    asyncio.run(run())

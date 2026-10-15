@@ -50,7 +50,7 @@ def _data_dir() -> Path:
         return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN
 
 
-@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.0.0")
+@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.0.2")
 class RemoteCiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -492,6 +492,7 @@ class RemoteCiPlugin(Star):
         """以当前用户的 RemoteCI 账号调用任意 REST API（服务端按账号权限鉴权），用于换课、广播、班级/分组/账号/成员管理、配对码、备份等。
         调用前先用 remoteci_reference 查阅接口；删除、恢复备份、广播和高风险控制必须先得到用户明确同意并设 confirmed=true。
         整体替换类接口（如班级成员）要先 GET、合并、再 PUT。
+        认证、密码修改、会话、插件凭据、系统初始化与服务端更新接口不开放；重置他人密码和系统管理写操作同样需要 confirmed=true。
 
         Args:
             method(string): HTTP 方法：GET、POST、PUT、DELETE
