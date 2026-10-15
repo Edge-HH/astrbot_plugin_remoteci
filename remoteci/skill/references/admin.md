@@ -142,6 +142,7 @@ ID,用户名,班级,角色,密码
 | 服务端状态 | `GET /api/admin/status`，需要“概览”权限 |
 | 系统信息 | `GET /api/admin/system` |
 | 检查更新 | `POST /api/admin/updates/check` |
+| 手动上传更新包（调试） | `POST /api/admin/updates/upload`，请求体为当前平台服务端发布包 zip 的原始字节（`Content-Type: application/zip`，上限 512MB）；不校验 SHA-256，允许同版本覆盖和降级，成功返回 `202` 与 `{"version":"…","mode":"…"}` 后服务端自动重启。会替换服务端程序，执行前必须获得用户确认 |
 | 备份 | `GET` 或 `POST /api/admin/backups` 列出或创建；`DELETE /api/admin/backups/{name}` 删除 |
 | 恢复备份 | `POST /api/admin/backups/{name}/restore`，会覆盖当前数据，执行前必须获得用户确认 |
 
