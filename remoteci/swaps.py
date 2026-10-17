@@ -84,7 +84,8 @@ def format_request(item: dict) -> str:
 
 
 def format_notification(note: dict) -> str:
-    text = f"【RemoteCI 换课】{note.get('title') or ''}\n{note.get('body') or ''}".rstrip()
+    category = "课程提醒" if str(note.get("kind") or "").startswith("personal_course_") else "换课"
+    text = f"【RemoteCI {category}】{note.get('title') or ''}\n{note.get('body') or ''}".rstrip()
     hint = NOTIFY_HINTS.get(note.get("kind") or "")
     if hint and note.get("swapRequestId"):
         text += "\n" + hint.format(short=short_id(note["swapRequestId"]))
@@ -107,7 +108,7 @@ class SwapInbox:
         """轮询所有已绑定账号，返回是否需要保存状态。"""
         dirty = False
         for key, binding in list(self._service.store.bindings.items()):
-            if binding.get("status") == "auth_failed" or not binding.get("umo") or not can_request_swap(binding):
+            if binding.get("status") == "auth_failed" or not binding.get("umo"):
                 continue
             if not force and time.time() - self._last_poll.get(key, 0) < POLL_SECONDS:
                 continue
@@ -131,7 +132,8 @@ class SwapInbox:
             return False
         for note in sorted(items, key=lambda x: x.get("createdAt") or ""):
             if not note.get("readAt"):
-                await self._service._push(binding["umo"], "swap", format_notification(note))
+                if not await self._service._push(binding["umo"], "swap", format_notification(note)):
+                    return True  # 保留游标，下次轮询重试，避免丢失课程提醒。
             binding["swap_cursor"] = max(binding["swap_cursor"], note.get("createdAt") or "")
         return True
 

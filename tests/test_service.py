@@ -25,6 +25,8 @@ class FakeServer:
                                                       "permissions": 2779}]}
         if path == "/api/me/schedule":
             return self.my
+        if path == "/api/me/notifications":
+            return []
         if path == "/api/schedule":
             return self.class_schedule
         if path == "/api/commands":

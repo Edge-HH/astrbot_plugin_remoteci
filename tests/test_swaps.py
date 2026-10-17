@@ -73,11 +73,15 @@ def test_inbox_sets_baseline_then_pushes_new_notifications_with_reply_hint(tmp_p
     asyncio.run(run())
 
 
-def test_inbox_skips_accounts_without_swap_permission(tmp_path):
+def test_inbox_polls_personal_notifications_without_swap_permission(tmp_path):
     async def run():
         service, fake, sent = make(tmp_path, permissions=2569)
-        assert not await SwapInbox(service).poll(force=True)
-        assert fake.calls == []
+        inbox = SwapInbox(service)
+        assert await inbox.poll(force=True)
+        fake.notifications.append({"id": "personal-n1", "kind": "personal_course_start", "title": "上课提醒 · 自习",
+                                   "body": "08:00–09:00", "createdAt": "2099-10-05T01:00:00+00:00"})
+        assert await inbox.poll(force=True)
+        assert len(sent) == 1 and "课程提醒" in sent[0][1] and "自习" in sent[0][1]
     asyncio.run(run())
 
 

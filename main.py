@@ -264,6 +264,44 @@ class RemoteCiPlugin(Star):
         """
         return await self._tool(event, self.service.query_next)
 
+    @filter.llm_tool(name="remoteci_personal_courses")
+    async def tool_personal_courses(self, event: AstrMessageEvent):
+        """私聊查询本人自定义课程及完整编号；修改或删除前先查询以确定课程。
+
+        Args:
+        """
+        from .remoteci.personal_courses import list_courses
+        return await self._tool(event, lambda user: list_courses(self.service, user))
+
+    @filter.llm_tool(name="remoteci_save_personal_course")
+    async def tool_save_personal_course(self, event: AstrMessageEvent, subject: str, starts_at: str,
+                                        ends_at: str, location: str = "", reminder_minutes: int = 10,
+                                        notify_at_start: bool = True, course_id: str = ""):
+        """在私聊中创建或修改本人自定义课程，并同步所有设备。修改时先查询课程，保留用户未要求修改的字段。
+
+        Args:
+            subject(string): 课程名称
+            starts_at(string): 含时区的开始时间，如 2026-10-17T08:00:00+08:00
+            ends_at(string): 含时区的结束时间，必须晚于开始且时长不超过24小时
+            location(string): 地点，可留空
+            reminder_minutes(int): 提前提醒分钟数，1至10080，-1关闭课前提醒
+            notify_at_start(bool): 是否在上课时提醒
+            course_id(string): 新建留空，修改传查询所得完整编号
+        """
+        from .remoteci.personal_courses import save_course
+        return await self._tool(event, lambda user: save_course(self.service, user, subject, starts_at, ends_at,
+                                location, reminder_minutes, notify_at_start, course_id))
+
+    @filter.llm_tool(name="remoteci_delete_personal_course")
+    async def tool_delete_personal_course(self, event: AstrMessageEvent, course_id: str):
+        """在私聊中删除本人一节自定义课程。
+
+        Args:
+            course_id(string): 查询所得的完整课程编号
+        """
+        from .remoteci.personal_courses import delete_course
+        return await self._tool(event, lambda user: delete_course(self.service, user, course_id))
+
     @filter.llm_tool(name="remoteci_class_schedule")
     async def tool_class_schedule(self, event: AstrMessageEvent, class_name: str = "", day: str = "今天"):
         """查询某个班级的课表（含任课教师）。

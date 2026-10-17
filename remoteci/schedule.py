@@ -33,6 +33,7 @@ class Lesson:
     teacher: str = ""
     # 服务端按班级档案推算（该班插件从未同步过课表），可能与教室端实际课表不同。
     estimated: bool = False
+    personal_course_id: str = ""
 
     def start_time(self) -> time | None:
         return parse_clock(self.start)
@@ -121,10 +122,11 @@ def lessons_from_my_schedule(response: dict) -> dict[str, list[Lesson]]:
                     subject=c.get("subject") or "",
                     start=c.get("startTime") or "",
                     end=c.get("endTime") or "",
-                    class_id=str(item.get("classId") or ""),
+                    class_id=("personal:" + str(c["personalCourseId"])) if c.get("personalCourseId") else str(item.get("classId") or ""),
                     class_name=item.get("className") or "",
                     teacher=c.get("teacher") or "",
                     estimated=item.get("source") == SOURCE_PROFILE,
+                    personal_course_id=str(c.get("personalCourseId") or ""),
                 ))
         result[day_date] = sorted(lessons, key=_lesson_order)
     return result

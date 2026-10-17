@@ -64,6 +64,9 @@ def before_class_due(*, now: datetime, scope: str, lessons: list[Lesson], minute
     result = []
     lead = timedelta(minutes=minutes)
     for lesson in lessons:
+        # 自定义课程的课前/上课提醒由服务端按逐课设置生成，个人通知轮询负责转发，避免重复提醒。
+        if lesson.personal_course_id:
+            continue
         start = lesson.start_time()
         if not start or lesson.date != now.date().isoformat():
             continue

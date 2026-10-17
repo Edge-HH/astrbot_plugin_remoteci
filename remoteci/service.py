@@ -277,8 +277,14 @@ class RemoteCiService:
     def has_personal_schedule(self, binding: dict) -> bool:
         return (binding.get("profile") or {}).get("roleKind") in (4, 5)
 
+    def _tz_params(self) -> dict:
+        """配置时区的 UTC 偏移（分钟）：服务端还没有任何教室上报时区时（例如只有按档案推算的班级），据此换算课程钟点与“今天”。"""
+        offset = self.now().utcoffset()
+        return {"timeZoneOffsetMinutes": int(offset.total_seconds() // 60)} if offset is not None else {}
+
     async def my_days(self, binding: dict, ttl: float = 120) -> dict[str, list[sch.Lesson]]:
-        data = await self._cached(binding, "my", lambda: self._call(binding, "GET", "/api/me/schedule"), ttl)
+        data = await self._cached(binding, "my", lambda: self._call(binding, "GET", "/api/me/schedule",
+                                                                    params=self._tz_params()), ttl)
         return sch.lessons_from_my_schedule(data or {})
 
     async def class_days(self, binding: dict, cls: dict | None, ttl: float = 120) -> dict[str, list[sch.Lesson]]:
@@ -322,8 +328,8 @@ class RemoteCiService:
 
     async def query_my_schedule(self, user: ChatUser, day: str | None = None) -> str:
         binding = self.require_binding(user)
-        if not self.has_personal_schedule(binding):
-            return "“我的日程”仅对老师和班主任账号开放。学生或其他账号可以用“/rci 班级 [班级名] [日期]”查看班级课表。"
+        if not user.is_private:
+            return "个人日程包含私人课程，请在私聊中查询；群聊可查询班级课表。"
         days = await self.my_days(binding)
         text = self._render_days(days, day, title="我的日程", show_class=True, show_teacher=False,
                                  empty_hint="没有你的课程。若一直为空，请确认 RemoteCI 显示名与课表中的任课教师名完全一致"
@@ -364,9 +370,9 @@ class RemoteCiService:
 
     async def query_next(self, user: ChatUser) -> str:
         binding = self.require_binding(user)
-        if not self.has_personal_schedule(binding):
-            return "“下一节课”基于老师的个人日程，仅对老师和班主任账号开放。"
-        data = await self._call(binding, "GET", "/api/me/schedule/next")
+        if not user.is_private:
+            return "个人日程包含私人课程，请在私聊中查询。"
+        data = await self._call(binding, "GET", "/api/me/schedule/next", params=self._tz_params())
         lines = []
         for key, title in (("current", "正在上"), ("next", "下一节")):
             slot = (data or {}).get(key)
@@ -513,6 +519,8 @@ class RemoteCiService:
         path = (path or "").strip()
         # 服务端路由不区分大小写，按小写比较；拒绝 ..、//、反斜杠、百分号编码与内嵌查询串，防止绕过下方的黑名单。
         lower = path.lower()
+        if not user.is_private and lower.startswith(("/api/me/schedule", "/api/me/notifications")):
+            raise ServiceError("个人日程和通知仅可在私聊中访问。")
         if (not lower.startswith("/api/") or ".." in path or "//" in path or any(c in path for c in "\\%?#")
                 or any(c.isspace() or ord(c) < 32 for c in path)):
             raise ServiceError("path 必须是以 /api/ 开头的普通路径（不含 ..、//、%、?、#），查询参数请放在 query_json。")

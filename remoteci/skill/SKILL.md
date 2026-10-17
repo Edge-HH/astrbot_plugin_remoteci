@@ -78,16 +78,16 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 
 `404 尚无课表` 或 `404 尚无课程状态` 表示这个班的 ClassIsland 插件还没把数据同步到服务端，可能是插件离线或服务端刚重启，请用户稍后再试。
 
-**老师和班主任的“我的日程”**（全局 `roleKind` 为 `5` 或 `4` 时可用）：
+**“我的日程”**：所有账号可管理自己的自定义课程；老师和班主任（全局 `roleKind` 为 `5` 或 `4`）还聚合按显示名绑定的任教课程。
 
-- `GET /api/me/schedule`：跨班聚合的七天日程。返回 `days[]`，每天的 `items[]` 按班级分组，含 `className` 和 `courses[]`。插件从未同步过课表的班级按档案推算，其 item 带 `"source":"profile"`，回答时说明是推算。
-- `GET /api/me/schedule/next`：返回 `current`（正在上的课）和 `next`（下一节），每项含 `className`、`course`、`startsAt`、`endsAt`。查询其他时刻时加 `?at=<ISO 8601>`，时间里的 `+` 写成 `%2B`。
+- `GET /api/me/schedule`：任教课表的七天日程与本人的自定义课程。返回 `days[]`，每天的 `items[]` 按班级分组，含 `className` 和 `courses[]`。插件从未同步过课表的班级按档案推算，其 item 带 `"source":"profile"`，回答时说明是推算。
+- `GET /api/me/schedule/next`：返回 `current`（正在上的课）和 `next`（下一节，可能在之后几天），每项含 `className`、`course`、`startsAt`、`endsAt`。查询其他时刻时加 `?at=<ISO 8601>`，时间里的 `+` 写成 `%2B`。同时加上 `timeZoneOffsetMinutes=<用户所在时区的 UTC 偏移分钟数>`（东八区为 `480`）：还没有任何教室插件上报过时区时（例如只有按档案推算的班级），服务端据此换算上课时间，否则会退回服务端时区（Docker 默认 UTC）。
 
 回答“下节课去哪”时包含班级、科目、节次和起止钟点；有 `current` 时先说现在正在上什么。`startTime`/`endTime` 是教室当地钟点，直接引用；`startsAt`/`endsAt` 只用来计算“还有多久”。
 
 日程为空时，按顺序排查，把第一个成立的原因告诉用户：
 
-1. 账号不是老师角色。
+1. 没有自定义课程，且账号不是老师或班主任角色。
 2. 账号的 `displayName` 与课表里的教师名不一致。两者必须完全相同；一科多位老师时教师名写成 `张三/李四`，每位老师都能匹配到这门课。分隔符可用 `/`、`、`、`,`、`;`、`|`、`&`、`+`、`\`（半角或全角均可），空格不算分隔符。
 3. 七天内已经没有这位老师的后续课程。
 4. 插件尚未同步课表。
@@ -122,3 +122,10 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 | `409` | 冲突：用户名已存在、最后一个管理员，或换课时课表已被别人修改（`SCHEDULE_STALE`）；换课申请的课位已变化（`SWAP_SLOT_CHANGED`）、申请已被处理（`SWAP_STATE_CONFLICT`），或当天这节课的强制换课已被撤回（`SWAP_FORCE_LOCKED`） |
 | `400` | 请求无效；换课申请两节课都不是自己的（`SWAP_NOT_OWN`），或目标班级没有该学科（`SWAP_SUBJECT_MISSING`） |
 | `503` / `504` | 教室端插件离线，或执行超时 |
+
+### 自定义课程（仅本人）
+
+- 列表：`GET /api/me/schedule/courses`。创建：`POST /api/me/schedule/courses`。修改：`PUT /api/me/schedule/courses/{id}`（完整替换，先查询并保留其他字段）。删除：`DELETE /api/me/schedule/courses/{id}`。
+- 请求：`{subject, location, startsAt, endsAt, reminderMinutes, notifyAtStart}`。时间为带偏移的 ISO 8601，结束晚于开始且最长 24 小时；名称 1–100 字，地点最多 200 字。`reminderMinutes` 为 1–10080 分钟，null 表示关闭；`notifyAtStart` 控制上课提醒。响应额外带稳定 `id`。
+- 服务端按认证账号隔离，管理自定义课程不需要班级权限。`/api/me/schedule` 中 `source: "personal"` 的条目与任教课程一起显示；其 `classId` 为全零 GUID，不可当成真实班级或提交换课；按 `courses[].personalCourseId` 识别私人课程。
+- 课前和上课提醒由服务端持久化到个人通知并推送。AstrBot 使用专用 `remoteci_personal_courses`、`remoteci_save_personal_course`、`remoteci_delete_personal_course` 工具，`reminder_minutes=-1` 表示关闭课前提醒。所有自定义课程管理和个人日程查询都应在私聊中执行，不能把私人课程或个人通知输出到群聊。
