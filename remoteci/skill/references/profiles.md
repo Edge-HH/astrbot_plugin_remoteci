@@ -26,6 +26,20 @@
 
 档案 JSON 很大，通常不要在对话里手写；用户要改具体课程时，优先用换课（[control.md](control.md)）或建议到 WebUI“档案管理”页编辑。
 
+## 历史版本与设备差异
+
+每次保存都会留下一个版本（每份保留最近 50 个）。
+
+| 请求 | 说明 |
+| --- | --- |
+| `GET /api/profiles/{id}/versions` | 版本列表：`revision`、`savedByName`、`savedAt`、`originLabel`、`changeCount`（相比上一版）、`isCurrent` |
+| `GET /api/profiles/{id}/versions/{revision}/diff?against=previous` | 这一版改了什么；`against=current` 则是这一版与当前内容的差异。返回 `changes[]`，每项 `{category, text}`，如“课表「周三」第 4 节 数学 → 物理” |
+| `POST /api/profiles/{id}/versions/{revision}/restore` | body `{"revision": 当前修订号}`，把历史版本另存为新版本；不影响教室电脑，需要时再下发 |
+| `POST /api/profiles/drift` | body `{"classIds":[…]}`，读取这些班级教室电脑的当前档案并与服务端班级档案比较（不含临时层），逐班返回 `changeCount` |
+| `GET /api/profiles/drift` | 可管理班级的最新差异结果，含 `changes[]` |
+
+回答“谁改了课表、改了什么”时先列版本，再看对应版本的 diff。设备差异的箭头左边是服务端档案、右边是教室电脑上的档案；处理方式由用户决定：以设备为准就收集后保存，以服务端为准就重新下发。恢复版本属于写操作，执行前确认。
+
 ## 从教室电脑收集
 
 `POST /api/profiles/collect`，body `{"classIds":["…"]}`（1–100 个班级）。服务端读取每班在线电脑上 ClassIsland 当前正在用的档案（含临时层），返回 `results[]`：`classId`、`className`、`deviceName`、`success`、`message`、`profileJson`（仅成功时有）和 `errors`（仍需修正的校验问题）。

@@ -89,7 +89,7 @@
 - `GET /api/me/notifications?unread=true`：未读通知；轮询时用 `?after=<上次最新的 createdAt>`。
 - `POST /api/me/notifications/read`，body 为 `{"ids":["…"]}` 或 `{"all":true}`：标记已读。
 
-每条通知含 `kind`、`title`、`body`、`swapRequestId`、`createdAt`、`readAt`。`kind` 取值：
+每条通知含 `kind`、`title`、`body`、`swapRequestId`、`createdAt`、`readAt`，部分通知还有 `classId` 和 `link`（站内相对路径，如 `/Devices`）。`kind` 取值：
 
 | `kind` | 含义 |
 | --- | --- |
@@ -100,5 +100,12 @@
 | `swap_forced` | 我的课被强制换走 |
 | `swap_revoked` | 我的强制换课被撤回 |
 | `swap_homeroom_info` | 本班课表因换课临时变化（发给班主任） |
+| `device_offline` | 教室电脑在在校时段离线超过阈值（发给系统管理员和该班班主任） |
+| `device_online` | 告警过的教室电脑重新上线 |
+| `automation_failed` | 我保存的自动化规则执行失败 |
 
 用户问“有没有人找我换课”时，先查 `box=incoming&status=1`。回答时给出申请人、两节课、理由和 `shortId`，再问是否通过。
+
+## 一次性确认链接（聊天机器人卡片）
+
+`POST /api/me/action-links`，body `{"action":"swap.approve","targetId":"<申请 id>"}`（也可为 `swap.reject`、`swap.revoke`），返回 `{url, path, expiresAt}`。链接 24 小时有效、只能成功使用一次：打开只显示确认页，点确认才执行。只有当前账号确实能执行该动作时才会签发（否则 400）。适合放在聊天卡片的按钮上；在对话里直接帮用户审批时，仍用上面的 `approve`/`reject`/`revoke` 接口。

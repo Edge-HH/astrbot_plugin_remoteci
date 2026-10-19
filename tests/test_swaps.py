@@ -68,8 +68,79 @@ def test_inbox_sets_baseline_then_pushes_new_notifications_with_reply_hint(tmp_p
         assert await inbox.poll(force=True)
         assert len(sent) == 1 and sent[0][0] == PRIVATE.umo
         assert "王老师 申请与你换课" in sent[0][1] and "/rci 换课 通过 a1b2c3d4" in sent[0][1]
+        assert "直接回复“同意”" in sent[0][1] and sent[0][1].endswith("https://rci.example.com/SwapRequests")
+        # 记下待处理项，供“同意 / 拒绝”快捷回复使用。
+        pending = service.store.bindings[PRIVATE.user_key]["pending_actions"]
+        assert [(p["short"], p["kind"]) for p in pending] == [("a1b2c3d4", "swap_requested")]
         assert not await inbox.poll(force=True)  # 不重复推送
         assert len(sent) == 1
+    asyncio.run(run())
+
+
+def test_push_failure_keeps_cursor_and_does_not_record_pending(tmp_path):
+    async def run():
+        service, fake, sent = make(tmp_path)
+        inbox = SwapInbox(service)
+        assert await inbox.poll(force=True)
+        cursor = service.store.bindings[PRIVATE.user_key]["swap_cursor"]
+
+        async def offline(umo, text):
+            return False
+        service._send = offline  # noqa: SLF001
+        fake.notifications.append({"id": "n1", "kind": "swap_requested", "title": "申请", "body": "",
+                                   "swapRequestId": REQUEST["id"], "createdAt": "2099-10-05T01:00:00+00:00"})
+        assert await inbox.poll(force=True)
+        binding = service.store.bindings[PRIVATE.user_key]
+        assert binding["swap_cursor"] == cursor and not binding.get("pending_actions")
+    asyncio.run(run())
+
+
+def test_ops_group_forwards_only_device_and_automation_with_own_cursor(tmp_path):
+    async def run():
+        service, fake, sent = make(tmp_path)
+        group = "aiocqhttp:GroupMessage:900"
+        service.store.touch_session(group, kind="group", name="运维群", platform="aiocqhttp", user_key=None)
+        await service.update_session(group, {"role": "ops_group", "binding_key": PRIVATE.user_key})
+        inbox = SwapInbox(service)
+        assert await inbox.poll(force=True)  # 私聊与运维群各自建立游标
+        assert sent == [] and service.store.sessions[group]["ops_cursor"]
+        fake.notifications += [
+            {"id": "d1", "kind": "device_offline", "title": "高一1班 教室电脑离线", "body": "已离线 10 分钟",
+             "link": "/Devices", "createdAt": "2099-10-05T01:00:00+00:00", "readAt": "2099-10-05T01:00:30+00:00"},
+            {"id": "s1", "kind": "swap_requested", "title": "王老师 申请与你换课", "body": "",
+             "swapRequestId": REQUEST["id"], "createdAt": "2099-10-05T01:01:00+00:00"},
+            {"id": "a1", "kind": "automation_failed", "title": "放学关机 执行失败", "body": "高一2班离线",
+             "link": "/Automation", "createdAt": "2099-10-05T01:02:00+00:00"},
+        ]
+        assert await inbox.poll(force=True)
+        group_msgs = [t for umo, t in sent if umo == group]
+        assert len(group_msgs) == 2  # 只转发设备与自动化，且不看管理员是否已读
+        assert group_msgs[0].startswith("【RemoteCI 设备离线】") and "/rci 设备" in group_msgs[0]
+        assert group_msgs[1].startswith("【RemoteCI 自动化告警】") and group_msgs[1].endswith("/Automation")
+        private_msgs = [t for umo, t in sent if umo == PRIVATE.umo]
+        assert len(private_msgs) == 2 and "换课" in private_msgs[0]  # 已读的设备通知不再私聊推送
+        assert service.store.sessions[group]["ops_cursor"] == "2099-10-05T01:02:00+00:00"
+        assert service.store.bindings[PRIVATE.user_key]["swap_cursor"] == "2099-10-05T01:02:00+00:00"
+        assert not await inbox.poll(force=True)
+        assert "测试推送 · 运维群" in await service.preview(group)  # WebUI“测试推送”不需要班级
+    asyncio.run(run())
+
+
+def test_ops_group_requires_admin_binding_and_group_session(tmp_path):
+    async def run():
+        service, _, _ = make(tmp_path)
+        group = "aiocqhttp:GroupMessage:900"
+        service.store.touch_session(group, kind="group", name="运维群", platform="aiocqhttp", user_key=None)
+        service.store.touch_session(PRIVATE.umo, kind="private", name="李老师", platform="aiocqhttp",
+                                    user_key=PRIVATE.user_key)
+        for umo, patch, message in ((group, {"role": "ops_group"}, "管理员账号"),
+                                    (PRIVATE.umo, {"role": "ops_group"}, "只有群聊")):
+            try:
+                await service.update_session(umo, patch)
+                raise AssertionError("expected refusal")
+            except Exception as ex:  # noqa: BLE001
+                assert message in str(ex)
+        assert service.store.sessions[group]["role"] == "auto"
     asyncio.run(run())
 
 
@@ -101,7 +172,14 @@ def test_swap_commands_list_and_decide(tmp_path):
 
 
 def test_formatters():
-    assert "撤回" in format_notification({"kind": "swap_forced", "title": "王老师 强制换走了你的课", "body": "",
-                                          "swapRequestId": REQUEST["id"]})
+    forced = format_notification({"kind": "swap_forced", "title": "王老师 强制换走了你的课", "body": "",
+                                  "swapRequestId": REQUEST["id"]})
+    assert "直接回复“撤回”" in forced and "/rci 换课 撤回 a1b2c3d4" in forced
+    assert "编号" not in format_notification({"kind": "swap_requested", "title": "申请", "body": ""})
+    online = format_notification({"kind": "device_online", "title": "高一1班 教室电脑已恢复在线", "body": ""})
+    assert online.startswith("【RemoteCI 设备恢复】") and "/rci 设备" in online
+    failed = format_notification({"kind": "automation_failed", "title": "放学关机 执行失败", "body": "高一2班离线"})
+    assert failed.startswith("【RemoteCI 自动化告警】") and "/rci 自动化 运行" in failed
+    assert format_notification({"kind": "device_unknown", "title": "x", "body": ""}).startswith("【RemoteCI 设备】")
     replace = {**REQUEST, "mode": 2, "source": None, "subjectName": "数学"}
     assert "→ 数学（王老师）" in format_request(replace)

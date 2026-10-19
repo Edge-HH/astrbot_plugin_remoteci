@@ -6,6 +6,7 @@ from typing import Awaitable, Callable
 
 from .service import ChatUser, RemoteCiService, ServiceError
 from .makeup import run_makeup_command
+from .operations import run_audit_command, run_automation_command, run_device_command, run_lesson_command
 from .profiles import run_profile_command
 from .swaps import run_swap_command
 
@@ -41,11 +42,17 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 换课 待办 | 我的   查看发给我的 / 我发起的换课申请
 /rci 换课 通过|拒绝 <编号> [备注]
 /rci 换课 撤回 <编号>   撤回别人对我的强制换课
-发起换课请在 RemoteCI WebUI 或手机 App 的“换课”页；有新申请时会主动私聊提醒。
+发起换课请在 RemoteCI WebUI 或手机 App 的“换课”页；有新申请时会主动私聊提醒，
+收到提醒后也可以直接回复“同意”“拒绝 理由”或“撤回”。
 ━ 服务端档案（管理员、班主任）━
 /rci 档案   查看服务端档案库
 /rci 档案 收集 [班级名…] [保存]   读取教室电脑当前档案（含临时层）
 /rci 档案 下发 <档案名> <更新|新建|临时层> [班级名…] [替换]   下发到教室电脑（临时层加“替换”覆盖同日已有安排）
+━ 运维（管理员、班主任）━
+/rci 设备   离线与待升级的教室设备
+/rci 课时 [本月|上月|<开始日期> <结束日期>] [教师名]   课时统计（查他人限管理员）
+/rci 审计 [班级名]   最近 10 条操作记录
+/rci 自动化 [运行|开|关 <规则名>]   自动化规则（管理员）
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
 更多操作（换课、音量、广播、系统管理等）直接用自然语言告诉我即可。
@@ -69,6 +76,10 @@ SUBCOMMANDS = {
     "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
     "makeup": "makeup", "调休": "makeup", "补课": "makeup",
     "profile": "profile", "档案": "profile", "profiles": "profile",
+    "devices": "devices", "设备": "devices", "设备状态": "devices", "device": "devices",
+    "lessons": "lessons", "课时": "lessons", "课时统计": "lessons", "lesson": "lessons",
+    "audit": "audit", "审计": "audit", "操作记录": "audit", "审计日志": "audit",
+    "automation": "automation", "自动化": "automation", "规则": "automation",
 }
 
 REMIND_ITEMS = {
@@ -167,6 +178,14 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str,
             return await run_makeup_command(service, user, args)
         if action == "profile":
             return await run_profile_command(service, user, args)
+        if action == "devices":
+            return await run_device_command(service, user, args)
+        if action == "lessons":
+            return await run_lesson_command(service, user, args)
+        if action == "audit":
+            return await run_audit_command(service, user, args)
+        if action == "automation":
+            return await run_automation_command(service, user, args)
     except ServiceError as ex:
         return str(ex)
     return HELP
@@ -216,4 +235,4 @@ async def _remind(service: RemoteCiService, user: ChatUser, args: list[str]) -> 
         if not value.isdigit():
             return "用法：/rci 提醒 课前 <分钟数>"
         return await service.update_reminders(user, {"before_minutes": int(value), "before_enabled": True})
-    return "没看懂这条提醒设置。\n" + HELP.split("━ 主动提醒")[1].split("━ 控制")[0].strip()
+    return "没看懂这条提醒设置。\n" + HELP.split("━ 主动提醒")[1].split("━ 换课申请")[0].strip()

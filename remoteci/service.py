@@ -19,9 +19,9 @@ from . import schedule as sch
 from .client import RemoteCiClient, RemoteCiError, normalize_base_url
 from .holidays import HolidayCalendar
 from .reminders import digest_due, personal_due, tomorrow_trigger
-from .swaps import SwapInbox
-from .store import (DEFAULT_SESSION_PUSH, REMINDER_KEYS, ROLE_AUTO, ROLE_CLASS_GROUP, ROLE_HEAD, ROLE_NONE,
-                    ROLE_TEACHER, SESSION_ROLES, Store)
+from .swaps import SwapInbox, log_kind
+from .store import (CARD_PLATFORMS, DEFAULT_SESSION_PUSH, REMINDER_KEYS, ROLE_AUTO, ROLE_CLASS_GROUP, ROLE_HEAD,
+                    ROLE_NONE, ROLE_OPS_GROUP, ROLE_TEACHER, SESSION_ROLES, Store)
 
 
 class _NullLog:
@@ -33,7 +33,7 @@ class _NullLog:
 
 ROLE_KIND_NAMES = {2: "管理员", 4: "班主任", 5: "老师", 1: "学生"}
 ROLE_NAMES = {ROLE_AUTO: "自动", ROLE_NONE: "不推送", ROLE_TEACHER: "老师", ROLE_HEAD: "班主任",
-              ROLE_CLASS_GROUP: "班级群"}
+              ROLE_CLASS_GROUP: "班级群", ROLE_OPS_GROUP: "运维群"}
 
 # 需要用户在对话中明确确认后才执行的命令编号（与 skill 的“先确认再执行”一致）。
 DANGEROUS_COMMANDS = {5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23}
@@ -79,6 +79,9 @@ class RemoteCiService:
         self.last_tick_error = ""
         # 换课申请个人通知：独立于节假日与推送角色，有“老师主动换课”权限的绑定都会收到。
         self.swaps = SwapInbox(self)
+        # 原生卡片发送器 `await note_sender(umo, binding, note, text) -> bool`，由 main.py 注入；
+        # 返回 False 或抛出异常时改发文本。
+        self.note_sender: Callable[[str, dict, dict, str], Awaitable[bool]] | None = None
 
     # ---------- 生命周期 ----------
 
@@ -746,9 +749,39 @@ class RemoteCiService:
         except Exception as ex:  # noqa: BLE001
             self.log.warning(f"RemoteCI 主动消息发送失败 {umo}：{ex}")
             ok = False
+        self._record(umo, kind, text, ok)
+        return ok
+
+    def _record(self, umo: str, kind: str, text: str, ok: bool) -> None:
         session = self.store.sessions.get(umo) or {}
         self.store.add_log(kind, session.get("name") or umo, text, ok)
-        return ok
+
+    async def push_note(self, umo: str, binding: dict, note: dict, text: str) -> bool:
+        """推送一条个人通知：飞书、钉钉、企业微信优先发原生卡片；其他平台或卡片失败时发文本（附快捷回复提示与查看链接）。"""
+        from .cards import text_message
+
+        kind = log_kind(note.get("kind"))
+        if self.note_sender is not None:
+            try:
+                if await self.note_sender(umo, binding, note, text):
+                    self._record(umo, kind, text + "\n（已发送卡片）", True)
+                    return True
+            except Exception as ex:  # noqa: BLE001 - 卡片失败不能影响文本推送
+                self.log.warning(f"RemoteCI 卡片推送出错，改发文本 {umo}：{ex}")
+        return await self._push(umo, kind, text_message(note, binding.get("server_url") or ""))
+
+    # ---------- 原生卡片设置 ----------
+
+    def cards_enabled(self, platform: str) -> bool:
+        return bool(self.store.state.get("cards", {}).get(platform, True))
+
+    async def update_card_settings(self, patch: dict) -> dict:
+        cards = self.store.state.setdefault("cards", {})
+        for platform, enabled in (patch or {}).items():
+            if platform in CARD_PLATFORMS:
+                cards[platform] = bool(enabled)
+        await self.store.save()
+        return cards
 
     # ---------- WebUI ----------
 
@@ -768,6 +801,7 @@ class RemoteCiService:
             "auth_failed": sum(1 for b in bindings if b.get("status") == "auth_failed"),
             "teachers": sum(1 for r in roles if r in (ROLE_TEACHER, ROLE_HEAD)),
             "class_groups": sum(1 for r in roles if r == ROLE_CLASS_GROUP),
+            "ops_groups": sum(1 for r in roles if r == ROLE_OPS_GROUP),
             "sent_today": sent_today,
             "default_server": self.default_server,
             "last_error": self.last_tick_error,
@@ -814,11 +848,17 @@ class RemoteCiService:
         session = self.store.sessions.get(umo)
         if session is None:
             raise ServiceError("会话不存在")
+        new_role = patch.get("role", session.get("role"))
+        new_key = (patch.get("binding_key") or None) if "binding_key" in patch else session.get("binding_key")
+        if session.get("kind") == "group" and new_role == ROLE_OPS_GROUP and not new_key:
+            raise ServiceError("请选择运维群接收告警的管理员账号")
         if "role" in patch:
             if patch["role"] not in SESSION_ROLES:
                 raise ServiceError("未知角色")
             if patch["role"] == ROLE_CLASS_GROUP and session.get("kind") != "group":
                 raise ServiceError("只有群聊可以设为班级群")
+            if patch["role"] == ROLE_OPS_GROUP and session.get("kind") != "group":
+                raise ServiceError("只有群聊可以设为运维群；管理员私聊本来就会收到设备与自动化告警")
             if patch["role"] in (ROLE_TEACHER, ROLE_HEAD) and session.get("kind") != "private":
                 raise ServiceError("老师/班主任角色只能设置在个人会话上；群聊不做主动提醒")
             session["role"] = patch["role"]
@@ -826,6 +866,8 @@ class RemoteCiService:
             key = patch["binding_key"] or None
             if key and key not in self.store.bindings:
                 raise ServiceError("绑定账号不存在")
+            if key != session.get("binding_key"):
+                session.pop("ops_cursor", None)  # 换了管理员账号，运维群从新账号的最新通知开始转发
             session["binding_key"] = key
         if "class_id" in patch:
             session["class_id"] = patch["class_id"] or None
@@ -924,6 +966,14 @@ class RemoteCiService:
         if not binding:
             raise ServiceError("该会话没有可用的绑定账号")
         today = self.today()
+        if session.get("kind") == "group" and session.get("role") == ROLE_OPS_GROUP:
+            name = (binding.get("profile") or {}).get("displayName") or binding.get("key")
+            text = (f"【测试推送 · 运维群】{name} 收到的设备离线 / 恢复、自动化执行失败通知会转发到这里。\n"
+                    "群里也可以 @我 发送“/rci 设备”“/rci 自动化”查看。")
+            if not await self._push(umo, "test", text):
+                raise ServiceError("发送失败：平台未找到该会话，或机器人已不在该会话中")
+            await self.store.save()
+            return text
         if session.get("kind") == "group" or (session.get("push") or {}).get("content") == "class":
             cls = next((c for c in binding["profile"].get("classes") or [] if c.get("id") == session.get("class_id")), None)
             if not cls:

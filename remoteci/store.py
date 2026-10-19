@@ -30,13 +30,19 @@ DEFAULT_REMINDERS = {
 REMINDER_KEYS = set(DEFAULT_REMINDERS)
 
 ROLE_AUTO, ROLE_NONE, ROLE_TEACHER, ROLE_HEAD, ROLE_CLASS_GROUP = "auto", "none", "teacher", "headteacher", "class_group"
-SESSION_ROLES = {ROLE_AUTO, ROLE_NONE, ROLE_TEACHER, ROLE_HEAD, ROLE_CLASS_GROUP}
+# 运维群：转发所绑定管理员账号的设备与自动化告警（device_*、automation_* 个人通知）。
+ROLE_OPS_GROUP = "ops_group"
+SESSION_ROLES = {ROLE_AUTO, ROLE_NONE, ROLE_TEACHER, ROLE_HEAD, ROLE_CLASS_GROUP, ROLE_OPS_GROUP}
+
+# 支持原生卡片的平台（AstrBot 适配器名）；WebUI 可按平台关闭，关闭后改发文本。
+CARD_PLATFORMS = ("lark", "dingtalk", "wecom")
 
 DEFAULT_STATE = {
     "version": 1,
     "paused": False,
     "reminders": DEFAULT_REMINDERS,
     "holidays": {"use_official": True, "weekend_as_holiday": False, "ranges": []},
+    "cards": {platform: True for platform in CARD_PLATFORMS},
     "bindings": {},
     "sessions": {},
     "sent": {},
@@ -84,6 +90,8 @@ class Store:
         self.state["reminders"] = merged
         for key, value in DEFAULT_STATE["holidays"].items():
             self.state["holidays"].setdefault(key, deepcopy(value))
+        for platform in CARD_PLATFORMS:
+            self.state["cards"].setdefault(platform, True)
         for session in self.state["sessions"].values():
             push = deepcopy(DEFAULT_SESSION_PUSH)
             push.update(session.get("push") or {})

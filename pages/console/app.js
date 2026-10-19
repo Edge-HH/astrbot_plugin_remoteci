@@ -7,7 +7,8 @@
     const fab = document.getElementById("fab");
     const toastEl = document.getElementById("toast");
     let view = "overview";
-    let roles = { auto: "自动", none: "不推送", teacher: "老师", headteacher: "班主任", class_group: "班级群" };
+    let roles = { auto: "自动", none: "不推送", teacher: "老师", headteacher: "班主任", class_group: "班级群", ops_group: "运维群" };
+    const CARD_PLATFORMS = [["lark", "飞书"], ["dingtalk", "钉钉"], ["wecom", "企业微信"]];
     let sessionTab = "private";
 
     const ICON = {
@@ -128,7 +129,7 @@
             ${card("", "", `<div class="stats">
                 <div class="stat"><span>已绑定账号</span><strong>${o.bindings}</strong><small>${o.auth_failed ? `<span class="chip bad">${o.auth_failed} 个凭据失效</span>` : "凭据全部有效"}</small></div>
                 <div class="stat"><span>老师 / 班主任</span><strong>${o.teachers}</strong><small>个人主动提醒</small></div>
-                <div class="stat"><span>班级群</span><strong>${o.class_groups}</strong><small>仅定时课表</small></div>
+                <div class="stat"><span>班级群</span><strong>${o.class_groups}</strong><small>${o.ops_groups ? `另有运维群 ${o.ops_groups} 个` : "仅定时课表"}</small></div>
                 <div class="stat"><span>今日推送</span><strong>${o.sent_today}</strong><small>${o.holiday_today ? "假期暂停" : "条消息"}</small></div></div>`)}
             ${card("推送开关", "全局暂停后，所有主动推送停止；指令与自然语言查询不受影响。",
                 row("主动推送", o.paused ? "已暂停" : "运行中", toggle('id="running"', !o.paused)) +
@@ -140,7 +141,8 @@
             action(() => post("settings/pause", { paused: !e.target.checked }), e.target.checked ? "已恢复推送" : "已暂停推送").then(render, render));
     }
 
-    const KIND = { today: "当日日程", tomorrow: "次日日程", before: "课前提醒", change: "换课提醒", auth: "凭据失效", test: "测试推送" };
+    const KIND = { today: "当日日程", tomorrow: "次日日程", before: "课前提醒", change: "换课提醒", auth: "凭据失效", test: "测试推送",
+        swap: "个人通知", device: "设备告警", automation: "自动化告警" };
     function logRows(items) {
         if (!items.length) return empty("还没有推送", "老师绑定账号后，到点会自动推送。");
         return items.map((x) => `<div class="row"><div class="row-text"><strong>${esc(KIND[x.kind] || x.kind)} → ${esc(x.target)}</strong>
@@ -176,18 +178,23 @@
 
     // ---------- 会话与推送 ----------
     async function renderSessions() {
-        const { sessions, bindings } = await get("sessions");
+        const { sessions, bindings, cards } = await get("sessions");
         const inTab = (s, tab) => (tab === "group") === (s.kind === "group");
         const list = sessions.filter((s) => inTab(s, sessionTab));
         const count = (tab) => sessions.filter((s) => inTab(s, tab)).length;
         const desc = sessionTab === "group"
-            ? "把群设为班级群后，可以按时间推送班级课表（需显式开启）。群聊不做个人主动提醒；有人 @机器人 使用过一次后群才会出现在这里。"
+            ? "班级群按时间推送班级课表（需显式开启）；运维群转发所选管理员账号的设备离线/恢复与自动化失败告警。群聊不做个人主动提醒；有人 @机器人 使用过一次后群才会出现在这里。"
             : "老师、班主任的私聊会话接收主动提醒；“自动”按 RemoteCI 账号角色判断。";
         app.innerHTML = `<div class="section">${head("会话与推送", desc)}
             <div class="tabs"><button class="tab ${sessionTab === "private" ? "active" : ""}" data-tab="private">个人会话 · ${count("private")}</button>
             <button class="tab ${sessionTab === "group" ? "active" : ""}" data-tab="group">群聊 · ${count("group")}</button></div>
-            ${list.length ? list.map((s) => sessionCard(s, bindings)).join("") : card("", "", empty(sessionTab === "group" ? "还没有群聊" : "还没有个人会话", "用户私聊或在群里 @机器人 使用 /rci 后会出现在这里。"))}</div>`;
+            ${list.length ? list.map((s) => sessionCard(s, bindings)).join("") : card("", "", empty(sessionTab === "group" ? "还没有群聊" : "还没有个人会话", "用户私聊或在群里 @机器人 使用 /rci 后会出现在这里。"))}</div>
+            <div class="section-rule"></div>
+            <div class="section">${head("原生卡片", "换课申请、强制换课、设备与自动化告警在这些平台发送卡片（按钮打开 RemoteCI 一次性确认链接，钉钉另有一键快捷回复）；关闭或发送失败时改发文本。", "", 2)}
+            ${card("", "", CARD_PLATFORMS.map(([key, name]) => row(`${name}卡片`, key === "wecom" ? "企业微信应用消息 template_card，仅私聊" : key === "dingtalk" ? "ActionCard，含“直接回复”按钮" : "消息卡片 JSON 2.0", toggle(`data-card="${key}"`, (cards || {})[key] !== false))).join(""))}</div>`;
         app.querySelectorAll("[data-tab]").forEach((el) => el.addEventListener("click", () => { sessionTab = el.dataset.tab; render(); }));
+        app.querySelectorAll("[data-card]").forEach((el) => el.addEventListener("change", () =>
+            action(() => post("settings/cards", { patch: { [el.dataset.card]: el.checked } }), el.checked ? "已启用卡片" : "已改为文本推送").catch(render)));
         app.querySelectorAll(".card[data-umo]").forEach((el) => wireSession(el, list.find((s) => s.umo === el.dataset.umo)));
     }
 
@@ -195,12 +202,16 @@
         const p = s.push || {};
         const eff = s.effective_role;
         const isGroup = s.kind === "group";
-        const roleOpts = (isGroup ? ["auto", "none", "class_group"] : ["auto", "none", "teacher", "headteacher"])
+        const roleOpts = (isGroup ? ["auto", "none", "class_group", "ops_group"] : ["auto", "none", "teacher", "headteacher"])
             .map((r) => [r, r === "auto" ? `自动（当前：${roles[s.effective_role]}）` : roles[r]]);
         const classOpts = [["", "未选择"], ...(s.classes || []).map((c) => [c.id, c.name])];
-        let rows = row("推送角色", isGroup ? "群聊只能设为班级群或不推送" : "老师、班主任接收个人主动提醒", select('data-f="role"', roleOpts, s.role));
-        if (isGroup) {
-            rows += row("读取课表的账号", "用哪位已绑定用户的权限读取班级课表", select('data-f="binding_key"', [["", "未选择"], ...bindings.map((b) => [b.key, b.name])], s.binding_key))
+        const bindingOpts = [["", "未选择"], ...bindings.map((b) => [b.key, b.role_kind ? `${b.name}（${b.role_kind}）` : b.name])];
+        let rows = row("推送角色", isGroup ? "群聊可设为班级群、运维群或不推送" : "老师、班主任接收个人主动提醒", select('data-f="role"', roleOpts, s.role));
+        if (isGroup && s.role === "ops_group") {
+            rows += row("接收告警的管理员账号", "转发这个账号收到的设备离线/恢复、自动化失败通知；与该账号私聊的推送各自记录进度，互不影响", select('data-f="binding_key"', bindingOpts, s.binding_key))
+                + row("转发内容", "飞书、钉钉群发卡片，其他平台发文本", "<span>设备离线 / 恢复、自动化失败</span>");
+        } else if (isGroup) {
+            rows += row("读取课表的账号", "用哪位已绑定用户的权限读取班级课表", select('data-f="binding_key"', bindingOpts, s.binding_key))
                 + row("班级", "要推送的班级课表", select('data-f="class_id"', classOpts, s.class_id))
                 + row("定时推送班级课表", "默认关闭；节假日自动暂停", toggle('data-p="enabled"', p.enabled))
                 + row("当日课表时间", "", field('data-p="today_time"', p.today_time, "time", "sm"))

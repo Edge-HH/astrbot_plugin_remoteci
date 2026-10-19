@@ -24,6 +24,8 @@ except ImportError:  # 旧版 AstrBot
 
 from .remoteci.client import RemoteCiError
 from .remoteci.commands import HELP, run_command
+from .remoteci.delivery import NoteDelivery
+from .remoteci.quick_reply import handle_quick_reply
 from .remoteci.service import ROLE_NAMES, ChatUser, RemoteCiService, ServiceError
 
 try:  # AstrBot 新版插件页面 Web API（FastAPI）
@@ -50,12 +52,14 @@ def _data_dir() -> Path:
         return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN
 
 
-@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.0.2")
+@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.1.0")
 class RemoteCiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config or {}
         self.service = RemoteCiService(_data_dir(), send=self._send, config=dict(self.config), logger=logger)
+        # 飞书、钉钉、企业微信的个人通知改发原生卡片；失败时 service 自动改发文本。
+        self.service.note_sender = NoteDelivery(self.service, context)
         self._register_web()
 
     async def initialize(self):
@@ -125,6 +129,25 @@ class RemoteCiPlugin(Star):
         except Exception as ex:  # noqa: BLE001
             logger.exception("RemoteCI 指令出错")
             text = f"RemoteCI 插件出错：{ex}"
+        yield event.plain_result(text)
+        event.stop_event()
+
+    # ---------- 快捷回复（在 LLM 之前处理） ----------
+
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=10)
+    async def quick_reply(self, event: AstrMessageEvent):
+        """私聊直接回复“同意 / 拒绝 理由 / 撤回”处理刚推送的换课申请；不是快捷回复时不做任何处理。"""
+        if not self.service.store.bindings:
+            return
+        try:
+            text = await handle_quick_reply(self.service, self._user(event), event.message_str or "")
+        except (RemoteCiError, ServiceError) as ex:
+            text = f"RemoteCI 请求失败：{ex}"
+        except Exception:  # noqa: BLE001 - 快捷回复出错时不拦截消息，交给后续处理
+            logger.exception("RemoteCI 快捷回复出错")
+            return
+        if text is None:
+            return
         yield event.plain_result(text)
         event.stop_event()
 
@@ -583,6 +606,7 @@ class RemoteCiPlugin(Star):
             ("settings/reminders", self.web_settings_reminders, ["POST"]),
             ("settings/holidays", self.web_settings_holidays, ["POST"]),
             ("settings/pause", self.web_settings_pause, ["POST"]),
+            ("settings/cards", self.web_settings_cards, ["POST"]),
             ("holidays/refresh", self.web_holidays_refresh, ["POST"]),
         ]
         for route, handler, methods in routes:
@@ -633,13 +657,16 @@ class RemoteCiPlugin(Star):
 
     async def web_sessions(self):
         return await self._guard(self._value({"sessions": self.service.session_rows(),
-                                              "bindings": [{"key": b["key"], "name": b["display_name"] or b["username"]}
-                                                           for b in self.service.binding_rows()]}))
+                                              "bindings": [{"key": b["key"], "name": b["display_name"] or b["username"],
+                                                            "role_kind": b["role_kind"]}
+                                                           for b in self.service.binding_rows()],
+                                              "cards": self.service.store.state["cards"]}))
 
     async def web_settings(self):
         state = self.service.store.state
         return await self._guard(self._value({
             "reminders": state["reminders"], "holidays": state["holidays"], "paused": state.get("paused", False),
+            "cards": state["cards"],
             "upcoming": self.service.holidays.upcoming(self.service.today(), state["holidays"]),
             "official_data": self.service.holidays.has_year(self.service.today().year),
             "poll_minutes": self.service.poll_seconds // 60,
@@ -683,6 +710,10 @@ class RemoteCiPlugin(Star):
     async def web_settings_pause(self):
         body = await self._body()
         return await self._guard(self.service.set_paused(bool(body.get("paused"))))
+
+    async def web_settings_cards(self):
+        body = await self._body()
+        return await self._guard(self.service.update_card_settings(body.get("patch") or {}))
 
     async def web_holidays_refresh(self):
         return await self._guard(self.service.refresh_holidays(force=True))
