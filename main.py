@@ -52,7 +52,7 @@ def _data_dir() -> Path:
         return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN
 
 
-@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "1.1.0")
+@register(PLUGIN, "MEMZ_Edge", "RemoteCI 课表查询、教室控制与老师日程主动推送", "2.0.1")
 class RemoteCiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -71,6 +71,9 @@ class RemoteCiPlugin(Star):
     # ---------- 公共 ----------
 
     async def _send(self, umo: str, text: str) -> bool:
+        # 企业微信直接调平台接口：AstrBot 的适配器重启后 / 长连接模式下不能主动发送。
+        if await self.service.note_sender.send_text(umo, text):
+            return True
         return bool(await self.context.send_message(umo, MessageChain().message(text)))
 
     def _user(self, event: AstrMessageEvent) -> ChatUser:
@@ -106,6 +109,9 @@ class RemoteCiPlugin(Star):
         self.service.store.touch_session(event.unified_msg_origin, kind="private" if user.is_private else "group",
                                          name=name, platform=user.platform,
                                          user_key=user.user_key if user.is_private else None)
+        if event.get_platform_name() == "wecom" and self.service.note_sender.remember_wecom_agent(
+                user.platform, getattr(event.message_obj, "self_id", "")):
+            known = False  # 记下应用 agentid，重启后也能主动推送
         binding = self.service.store.binding_for(user.user_key)
         if binding and user.is_private and binding.get("umo") != user.umo:
             binding["umo"] = user.umo

@@ -5,7 +5,7 @@ from urllib.parse import unquote
 
 from remoteci.cards import build_card, dingtalk_card, lark_card, site_path, text_message, wecom_card
 from remoteci.client import RemoteCiError
-from remoteci.delivery import NoteDelivery, parse_umo
+from remoteci.delivery import NoteDelivery, parse_umo, split_utf8, wecom_ai_chat_id
 from remoteci.service import RemoteCiService
 
 TZ = timezone(timedelta(hours=8))
@@ -190,4 +190,57 @@ def test_action_link_404_and_unknown_platform_fall_back_to_text(tmp_path):
         qq = {**binding, "umo": "aiocqhttp:FriendMessage:42"}
         assert await service.push_note(qq["umo"], qq, OFFLINE, "原文")
         assert sent[-1] == ("aiocqhttp:FriendMessage:42", text_message(OFFLINE, SERVER))
+    asyncio.run(run())
+
+
+# ---------- 企业微信文本主动消息 ----------
+
+class FakeLongConnection:
+    def __init__(self, ok=True):
+        self.commands, self.ok = [], ok
+
+    async def send_command(self, cmd, req_id, body):
+        self.commands.append((cmd, body))
+        return self.ok
+
+
+def test_wecom_ai_chat_id_and_split():
+    assert wecom_ai_chat_id("wecom_ai_bot_wecomai_zhang_san") == "zhang_san"
+    assert wecom_ai_chat_id("plain") == "plain"
+    chunks = split_utf8("一" * 1000, limit=600)
+    assert all(len(c.encode()) <= 600 for c in chunks) and "".join(chunks) == "一" * 1000
+    assert split_utf8("a\nb", limit=600) == ["a\nb"]
+
+
+def test_wecom_text_push_uses_platform_api(tmp_path):
+    async def run():
+        adapter = FakeAdapter("wecom", "corp")
+        adapter.agent_id = None  # AstrBot 重启后还没收到消息
+        service, sent, _, _ = make(tmp_path, adapter)
+        delivery = service.note_sender
+        assert not await delivery.send_text("corp:FriendMessage:lisi", "你好")
+        assert delivery.remember_wecom_agent("corp", "1000002")
+        assert not delivery.remember_wecom_agent("corp", "1000002")
+        assert await delivery.send_text("corp:FriendMessage:lisi", "你好")
+        assert adapter.client.posts[-1] == ("message/send", {"touser": "lisi", "msgtype": "text", "agentid": 1000002,
+                                                             "text": {"content": "你好"}})
+        assert adapter.agent_id == "1000002"
+        assert not await delivery.send_text("corp:GroupMessage:g1", "你好")
+        assert not await delivery.send_text("aiocqhttp:FriendMessage:42", "你好")
+    asyncio.run(run())
+
+
+def test_wecom_ai_bot_long_connection_push(tmp_path):
+    async def run():
+        adapter = FakeAdapter("wecom_ai_bot", "aibot")
+        adapter.long_connection_client = FakeLongConnection()
+        service, _, _, _ = make(tmp_path, adapter)
+        assert await service.note_sender.send_text("aibot:FriendMessage:wecom_ai_bot_wecomai_lisi", "**课表**")
+        cmd, body = adapter.long_connection_client.commands[-1]
+        assert cmd == "aibot_send_msg" and body == {"chatid": "lisi", "msgtype": "markdown",
+                                                    "markdown": {"content": "**课表**"}}
+        adapter.long_connection_client.ok = False
+        assert not await service.note_sender.send_text("aibot:GroupMessage:wecom_ai_bot_wecomai_g1", "x")
+        adapter.long_connection_client = None  # HTTP 回调模式交给 AstrBot
+        assert not await service.note_sender.send_text("aibot:FriendMessage:wecom_ai_bot_wecomai_lisi", "x")
     asyncio.run(run())

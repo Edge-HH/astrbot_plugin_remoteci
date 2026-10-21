@@ -87,6 +87,15 @@
 
 AstrBot 的这三个适配器都不转发卡片按钮回调，所以按钮只打开链接（或在钉钉里发出快捷回复），插件不修改适配器。签名链接由 `POST /api/me/action-links` 签发；服务端没有这个接口（返回 404）时，换课类通知改发文本，设备与自动化告警的卡片不受影响。
 
+### 企业微信文本推送
+
+AstrBot 的企业微信适配器在两种情况下不能主动发消息：应用（`wecom`）重启后要等成员再发一条消息才知道 `agentid`；智能机器人（`wecom_ai_bot`）长连接模式没配“消息推送 Webhook”时没有主动发送通道。插件因此直接调平台接口发文本：
+
+- 应用：`message/send` 文本消息，`agentid` 取适配器配置、适配器当前值或插件记下的值（任一成员给应用发过消息后会保存到 `state.json`，重启后仍可用）；仅成员私聊。
+- 智能机器人长连接：`aibot_send_msg`（单聊 userid / 群聊 chatid，`markdown` 格式）。HTTP 回调模式仍走 AstrBot 的消息推送 Webhook。
+
+直接发送失败时再交给 AstrBot 的 `send_message`。
+
 ## 数据
 
 保存在 `data/plugin_data/astrbot_plugin_remoteci/`：`state.json`（绑定、会话、设置、卡片开关、快捷回复待处理项、推送记录）、`snapshots.json`（换课比对基线）、`holiday-<年>.json`（节假日缓存）。凭据（API Key 或续期密钥）以明文保存在该目录，请保护好 AstrBot 数据目录。

@@ -3,6 +3,9 @@
 由 main.py 注入 AstrBot 的 Context；本模块只在用到时才导入 AstrBot / lark_oapi，单元测试可直接用假对象。
 适配器按特性探测（AstrBot ≥ 4.26 的 context.get_platform_inst，或 context.platform_manager.platform_insts），
 任何一步失败——找不到适配器、签名链接接口未实现（404）、平台返回错误——都返回 False，由调用方回退为文本推送。
+
+企业微信的文本主动消息也在这里直接调平台接口（send_text）：AstrBot 的企业微信应用适配器重启后要等成员再发一条消息
+才知道 agentid，智能机器人长连接模式没配消息推送 Webhook 时根本不能主动发送，两种情况下 context.send_message 都会失败。
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ if TYPE_CHECKING:  # pragma: no cover
 DINGTALK_OTO_URL = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
 DINGTALK_GROUP_URL = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
 GROUP_MESSAGE = "GroupMessage"
+WECOM_AI_SESSION_PREFIX = "wecom_ai_bot_"
+WECOM_TEXT_LIMIT = 2000  # 企业微信文本消息上限 2048 字节，留点余量
 
 
 @dataclass
@@ -47,6 +52,36 @@ def parse_umo(umo: str) -> Target | None:
     if len(parts) != 3 or not all(parts):
         return None
     return Target(umo, *parts)
+
+
+def wecom_ai_chat_id(session_id: str) -> str:
+    """智能机器人的会话 ID 形如 wecom_ai_bot_wecomai_<userid / chatid>，主动推送要用原始 ID。"""
+    if not session_id.startswith(WECOM_AI_SESSION_PREFIX):
+        return session_id
+    rest = session_id[len(WECOM_AI_SESSION_PREFIX):]
+    return rest.split("_", 1)[1] if "_" in rest else rest
+
+
+def split_utf8(text: str, limit: int = WECOM_TEXT_LIMIT) -> list[str]:
+    """按 UTF-8 字节数切分长文本，尽量在换行处断开。"""
+    chunks, current = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line.encode("utf-8")) > limit:
+            cut = len(line)
+            while len(line[:cut].encode("utf-8")) > limit:
+                cut -= 1
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:cut])
+            line = line[cut:]
+        if len((current + line).encode("utf-8")) > limit:
+            chunks.append(current)
+            current = ""
+        current += line
+    if current or not chunks:
+        chunks.append(current)
+    return [c.rstrip("\n") for c in chunks if c.strip()] or [text]
 
 
 def platform_name(adapter: Any) -> str:
@@ -84,6 +119,76 @@ class NoteDelivery:
         except Exception as ex:  # noqa: BLE001 - 平台 SDK 抛出的异常种类很多，一律回退文本
             self._service.log.warning(f"RemoteCI 卡片发送失败（{platform}），改发文本：{ex}")
             return False
+        return True
+
+    # ---------- 企业微信文本主动消息 ----------
+
+    def remember_wecom_agent(self, platform_id: str, agent: Any) -> bool:
+        """记下企业微信应用的 agentid（收到成员消息时调用），重启后主动推送还能用；有变化时返回 True。"""
+        agent = str(agent or "").strip()
+        if not platform_id or not agent.isdigit():
+            return False
+        agents = self._service.store.state.setdefault("wecom_agents", {})
+        if agents.get(platform_id) == agent:
+            return False
+        agents[platform_id] = agent
+        return True
+
+    def _wecom_agent(self, adapter: Any, platform_id: str) -> Any:
+        config = getattr(adapter, "config", None) or {}
+        agent = (config.get("agent_id") or config.get("agentid") or getattr(adapter, "agent_id", None)
+                 or (self._service.store.state.get("wecom_agents") or {}).get(platform_id))
+        if not agent:
+            return None
+        if not getattr(adapter, "agent_id", None):
+            adapter.agent_id = str(agent)  # 顺手补上，AstrBot 自己的主动发送也能用了
+        return int(agent) if str(agent).isdigit() else agent
+
+    async def send_text(self, umo: str, text: str) -> bool:
+        """企业微信会话直接调平台接口发文本；不是企业微信、或平台不支持时返回 False，由调用方走 AstrBot 通用发送。"""
+        target = parse_umo(umo)
+        if target is None:
+            return False
+        adapter = self.find_adapter(target.platform_id)
+        platform = platform_name(adapter)
+        sender = {"wecom": self._send_wecom_text, "wecom_ai_bot": self._send_wecom_ai_text}.get(platform)
+        if sender is None:
+            return False
+        try:
+            return bool(await sender(adapter, target, text))
+        except Exception as ex:  # noqa: BLE001 - 失败后还会再试 AstrBot 通用发送
+            self._service.log.warning(f"RemoteCI 企业微信主动消息发送失败（{platform}）：{ex}")
+            return False
+
+    async def _send_wecom_text(self, adapter: Any, target: Target, text: str) -> bool:
+        client = getattr(adapter, "client", None)
+        if client is None or not callable(getattr(client, "post", None)) or hasattr(client, "kf_message"):
+            return False  # 微信客服不支持主动发送
+        if target.is_group:
+            return False
+        agent = self._wecom_agent(adapter, target.platform_id)
+        if not agent:
+            self._service.log.warning("RemoteCI 企业微信主动消息：还不知道应用的 agentid，"
+                                      "请让成员先给应用发一条消息，或在平台配置里填写 agent_id")
+            return False
+        loop = asyncio.get_running_loop()
+        for chunk in split_utf8(text):
+            payload = {"touser": target.session_id, "msgtype": "text", "agentid": agent, "text": {"content": chunk}}
+            result = await loop.run_in_executor(None, lambda p=payload: client.post("message/send", data=p))
+            if isinstance(result, dict) and (result.get("errcode") or result.get("invaliduser")):
+                raise RuntimeError(f"企业微信返回：{result}")
+        return True
+
+    async def _send_wecom_ai_text(self, adapter: Any, target: Target, text: str) -> bool:
+        """智能机器人长连接模式用 aibot_send_msg 主动推送（单聊填 userid，群聊填 chatid）。"""
+        client = getattr(adapter, "long_connection_client", None)
+        if client is None or not callable(getattr(client, "send_command", None)):
+            return False  # HTTP 回调模式只能靠 AstrBot 的消息推送 Webhook
+        chat_id = wecom_ai_chat_id(target.session_id)
+        for chunk in split_utf8(text):
+            body = {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": chunk}}
+            if not await client.send_command(cmd="aibot_send_msg", req_id=uuid.uuid4().hex, body=body):
+                raise RuntimeError(f"aibot_send_msg 发送失败（chatid={chat_id}），详见 AstrBot 日志")
         return True
 
     # ---------- 适配器与签名链接 ----------
@@ -210,11 +315,9 @@ class NoteDelivery:
             raise RuntimeError("微信客服模式不支持主动发送卡片")
         if target.is_group:
             raise RuntimeError("企业微信应用消息只能发给成员")
-        config = getattr(adapter, "config", None) or {}
-        agent = config.get("agent_id") or config.get("agentid") or getattr(adapter, "agent_id", None)
+        agent = self._wecom_agent(adapter, target.platform_id)
         if not agent:
             raise RuntimeError("还不知道应用的 agentid（成员先给应用发一条消息即可）")
-        agent = int(agent) if str(agent).isdigit() else agent
         payload = cards.wecom_card(card, target.session_id, agent)
         # wechatpy 是同步客户端，放到线程池里调用；errcode 非 0 时它会抛出异常。
         result = await asyncio.get_running_loop().run_in_executor(
