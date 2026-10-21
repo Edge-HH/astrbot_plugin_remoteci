@@ -2,7 +2,7 @@ name: astrbot_plugin_remoteci
 display_name: RemoteCI AstrbotConnector
 desc: 连接 RemoteCI：用指令或自然语言查课表、控制教室和管理系统；给老师主动推送当日/次日日程、课前提醒与换课提醒（可直接回复“同意”审批，飞书/钉钉/企业微信发原生卡片），节假日自动暂停；运维群转发设备与自动化告警；内置 WebUI 管理会话与推送。
 short_desc: RemoteCI 课表查询、控制与日程、消息推送
-version: v1.1.0
+version: v2.0.0
 author: Edge-HH
 repo: https://github.com/Edge-HH/astrbot_plugin_remoteci
 astrbot_version: ">=4.26.0"
