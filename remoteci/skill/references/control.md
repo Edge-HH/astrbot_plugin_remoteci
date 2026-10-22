@@ -59,7 +59,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 | 18 | 新增或替换时间表 | `timeLayoutUpdate`，见下 |
 | 19 | 加入 ClassIsland 集控 | `managementJoin`：`{"presetJson":"<ManagementPreset.json 内容>"}` |
 | 22 | 远程终端 | `terminalCommand`：`{"command":"hostname","workingDirectory":null,"timeoutSeconds":10}`，等同 `cmd /d /c`，结果在 `data` 里 |
-| 23 | 文件分发 | `fileDistribution`：`{"fileName":"a.pdf","contentBase64":"…","targetFolder":1 桌面 \| 2 下载 \| 3 文档,"overwrite":false}`，文件最大 10 MB |
+| 23 | 文件分发（旧的内联方式，仅系统管理员） | `fileDistribution`：`{"fileName":"a.pdf","contentBase64":"…","targetFolder":1 桌面 \| 2 下载 \| 3 文档,"overwrite":false}`，文件最大 10 MB。新代码请用下面的“文件分发”接口 |
 
 `profileDistribution` 的字段：
 
@@ -109,6 +109,16 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 升级、安装插件、终端等维护命令没有广播接口，按班循环调用 `/api/commands`。
 
+## 文件分发
+
+把文件发到教室电脑的桌面（`targetFolder` 1）、下载（2）或文档（3）文件夹。需要目标班级的“文件分发”权限（16384，系统管理员默认拥有）。文件先上传到服务端，设备在后台断点续传并校验 SHA-256，大小上限由服务端配置（默认 2 GB）。
+
+1. `POST /api/files?name=课件.pptx`，请求体就是文件的原始字节（`Content-Type: application/octet-stream`），返回 `{id, fileName, size, sha256, expiresAt}`。
+2. `POST /api/files/{id}/send`，请求体 `{"classNames":["高一3班"],"nextClass":false,"targetFolder":1,"overwrite":false}`。也可以用 `classIds`；`"nextClass":true` 表示发到当前账号“我的日程”里接下来要上课的班级（建议同时带 `timeZoneOffsetMinutes`）。返回逐台状态 `deliveries`。
+3. `GET /api/files/{id}` 查进度：`deliveries[].state` 为 0 等待、1 接收中、2 已送达、3 失败，另有 `percent`、`receivedBytes`、`message`、`savedPath`。设备收完通常需要几秒到几分钟，每隔几秒查询一次即可。
+
+默认不覆盖同名文件，而是自动改名为“名称 (2).扩展名”；只有用户明确要求覆盖时才传 `"overwrite": true`。插件离线的班级会立即显示失败；服务端保留文件 24 小时。
+
 ## 先确认再执行
 
 以下操作执行前，先向用户复述目标班级和具体内容，等用户明确同意：
@@ -116,7 +126,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 - 电源（`5`）、重启 ClassIsland（`20`）。
 - 卸载或禁用插件、修改插件策略。
 - 覆盖档案、替换时间表。
-- 远程终端、文件分发。
+- 远程终端；要覆盖同名文件的文件分发。
 - 修改扩展插件设置，尤其是同时改多个班级。
 - 向一个分组或全校广播。
 - 强制换课（`POST /api/swap-requests` 带 `"force": true`），见 [swap-requests.md](swap-requests.md#强制换课)。

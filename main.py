@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import base64
 import json
+import tempfile
+import time
+import uuid
 from pathlib import Path
 
 import aiohttp
@@ -41,6 +44,8 @@ PLUGIN = "astrbot_plugin_remoteci"
 SKILL_DIR = Path(__file__).parent / "remoteci" / "skill"
 QQ_OFFICIAL = {"qq_official", "qq_official_webhook"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# 用户先转发文件、再另发一句“发到几班”时，记住其最近一个文件的时长。
+RECENT_FILE_SECONDS = 30 * 60
 
 
 def _data_dir() -> Path:
@@ -60,6 +65,8 @@ class RemoteCiPlugin(Star):
         self.service = RemoteCiService(_data_dir(), send=self._send, config=dict(self.config), logger=logger)
         # 飞书、钉钉、企业微信的个人通知改发原生卡片；失败时 service 自动改发文本。
         self.service.note_sender = NoteDelivery(self.service, context)
+        # user_key -> (时间, 文件或图片消息段)；只在内存中保留，用于“把刚才那个文件发到几班”。
+        self._recent_files: dict[str, tuple[float, object]] = {}
         self._register_web()
 
     async def initialize(self):
@@ -129,7 +136,9 @@ class RemoteCiPlugin(Star):
         user = self._user(event)
         await self._remember(event, user)
         try:
-            text = await run_command(self.service, user, event.message_str, lambda: self._first_image(event))
+            text = await run_command(self.service, user, event.message_str, lambda: self._first_image(event),
+                                     lambda targets, folder, overwrite: self._send_file(event, user, targets, False,
+                                                                                        folder, overwrite))
         except RemoteCiError as ex:
             text = f"RemoteCI 请求失败：{ex}"
         except Exception as ex:  # noqa: BLE001
@@ -156,6 +165,82 @@ class RemoteCiPlugin(Star):
             return
         yield event.plain_result(text)
         event.stop_event()
+
+    # ---------- 文件读取（文件分发） ----------
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
+    async def remember_file(self, event: AstrMessageEvent):
+        """记住用户最近发来的文件，供随后一句“发到几班桌面”使用；不拦截消息。"""
+        try:
+            chain = list(event.get_messages())
+        except Exception:  # noqa: BLE001
+            return
+        files = [c for c in chain if isinstance(c, Comp.File)]
+        if files:
+            self._recent_files[self._user(event).user_key] = (time.time(), files[-1])
+
+    def _message_file(self, event: AstrMessageEvent):
+        """本条消息里的文件 → 被回复消息里的文件 → 30 分钟内最近收到的文件 → 本条/被回复消息里的图片。"""
+        try:
+            chain = list(event.get_messages())
+        except Exception:  # noqa: BLE001
+            chain = []
+        replied = [c for comp in chain if isinstance(comp, Comp.Reply) for c in (getattr(comp, "chain", None) or [])]
+        for source in (chain, replied):
+            files = [c for c in source if isinstance(c, Comp.File)]
+            if files:
+                return files[-1]
+        recent = self._recent_files.get(self._user(event).user_key)
+        if recent and time.time() - recent[0] < RECENT_FILE_SECONDS:
+            return recent[1]
+        for source in (chain, replied):
+            images = [c for c in source if isinstance(c, Comp.Image)]
+            if images:
+                return images[-1]
+        return None
+
+    async def _materialize(self, comp) -> tuple[Path, str, bool]:
+        """把文件或图片消息段落地为本地文件；返回（路径、文件名、是否为需要删除的临时文件）。"""
+        name = str(getattr(comp, "name", "") or "")
+        path: Path | None = None
+        getter = getattr(comp, "get_file", None)
+        if getter:
+            try:
+                local = await getter()
+                if local and Path(str(local).removeprefix("file:///")).is_file():
+                    path = Path(str(local).removeprefix("file:///"))
+            except Exception:  # noqa: BLE001 - 不同平台适配器的文件来源不同，失败时再按 url/file 读取
+                pass
+        if path is None:
+            for attr in ("file_", "file", "path"):
+                try:
+                    ref = getattr(comp, attr, None)
+                except Exception:  # noqa: BLE001
+                    ref = None
+                if isinstance(ref, str) and ref and Path(ref.removeprefix("file:///")).is_file():
+                    path = Path(ref.removeprefix("file:///"))
+                    break
+        if path is not None:
+            return path, name or path.name, False
+        url = getattr(comp, "url", None) or getattr(comp, "file", None)
+        if isinstance(url, str) and url.startswith("base64://"):
+            temp = Path(tempfile.gettempdir()) / f"remoteci-{uuid.uuid4().hex}"
+            temp.write_bytes(base64.b64decode(url[len("base64://"):]))
+            return temp, name or ("图片.png" if isinstance(comp, Comp.Image) else "文件"), True
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            temp = Path(tempfile.gettempdir()) / f"remoteci-{uuid.uuid4().hex}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=1800)) as resp:
+                    if resp.status != 200:
+                        raise ServiceError(f"无法下载这个文件（HTTP {resp.status}），请重新发送。")
+                    with temp.open("wb") as out:
+                        async for chunk in resp.content.iter_chunked(256 * 1024):
+                            out.write(chunk)
+            fallback = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "文件"
+            if isinstance(comp, Comp.Image) and "." not in fallback:
+                fallback = "图片.jpg"
+            return temp, name or fallback, True
+        raise ServiceError("读取不到这个文件：请重新发送文件后再说要发到哪个班。")
 
     # ---------- 图片读取（班级头像） ----------
 
@@ -530,6 +615,34 @@ class RemoteCiPlugin(Star):
                 return "没有在这条消息里找到图片：请把图片和要求一起发送，或回复那张图片。"
             return await self.service.set_class_avatar(user, class_name or None, image)
         return await self._tool(event, run)
+
+    @filter.llm_tool(name="remoteci_send_file")
+    async def tool_send_file(self, event: AstrMessageEvent, classes: str = "", next_class: bool = False,
+                             folder: str = "桌面", overwrite: bool = False):
+        """把用户发来（或回复、或刚刚转发）的文件发到班级电脑的桌面、下载或文档文件夹，经服务端中转并报告每台设备的接收进度。
+        用户说“发到下节课的班”“发到我下一个要上课的班”时 next_class=true。需要文件分发权限。
+
+        Args:
+            classes(string): 目标班级名，多个用空格或顿号分隔；只发到下节课的班时可留空
+            next_class(boolean): 是否发到当前用户“我的日程”中接下来要上课的班级
+            folder(string): 保存位置：桌面、下载 或 文档，默认桌面
+            overwrite(boolean): 用户明确要求覆盖同名文件时为 true；默认自动改名不覆盖
+        """
+        return await self._tool(event, lambda user: self._send_file(event, user, classes, next_class, folder, overwrite))
+
+    async def _send_file(self, event: AstrMessageEvent, user: ChatUser, classes, next_class: bool, folder: str,
+                         overwrite: bool) -> str:
+        from .remoteci.files import send_file
+
+        comp = self._message_file(event)
+        if comp is None:
+            return "没有找到要发送的文件：请先把文件发给我（或回复那条文件消息），再说要发到哪个班。"
+        path, name, temporary = await self._materialize(comp)
+        try:
+            return await send_file(self.service, user, path, name, classes, next_class, folder, overwrite)
+        finally:
+            if temporary:
+                path.unlink(missing_ok=True)
 
     @filter.llm_tool(name="remoteci_class_command")
     async def tool_class_command(self, event: AstrMessageEvent, class_name: str, command: int,

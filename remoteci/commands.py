@@ -55,6 +55,7 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 自动化 [运行|开|关 <规则名>]   自动化规则（管理员）
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
+/rci 发文件 <班级名…|下节课> [下载|文档] [覆盖]   把刚发来（或回复）的文件发到教室电脑，默认桌面
 更多操作（换课、音量、广播、系统管理等）直接用自然语言告诉我即可。
 群聊中请 @我 后再发指令；群聊不做个人主动提醒。"""
 
@@ -72,6 +73,7 @@ SUBCOMMANDS = {
     "avatar": "avatar", "班级头像": "avatar", "班头像": "avatar", "头像": "avatar",
     "remind": "remind", "提醒": "remind", "reminder": "remind",
     "notify": "notify", "通知": "notify",
+    "file": "file", "发文件": "file", "文件": "file", "发送文件": "file", "sendfile": "file",
     "holiday": "holiday", "假期": "holiday", "节假日": "holiday",
     "swap": "swap", "换课": "swap", "换课申请": "swap", "调课": "swap",
     "makeup": "makeup", "调休": "makeup", "补课": "makeup",
@@ -106,8 +108,10 @@ def strip_command(text: str) -> list[str]:
 
 
 async def run_command(service: RemoteCiService, user: ChatUser, text: str,
-                      image_loader: Callable[[], Awaitable[bytes | None]] | None = None) -> str:
-    """image_loader 读取本条消息（或被回复消息）中的第一张图片，供“班级头像”使用。"""
+                      image_loader: Callable[[], Awaitable[bytes | None]] | None = None,
+                      file_sender: Callable[[list[str], str, bool], Awaitable[str]] | None = None) -> str:
+    """image_loader 读取本条消息（或被回复消息）中的第一张图片，供“班级头像”使用；
+    file_sender(目标, 保存位置, 是否覆盖) 发送本条、被回复或刚收到的文件，供“发文件”使用。"""
     tokens = strip_command(text)
     if not tokens:
         return HELP
@@ -172,6 +176,12 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str,
             if len(args) < 2:
                 return "用法：/rci 通知 <班级名> <内容>"
             return await service.notify(user, args[0], " ".join(args[1:]))
+        if action == "file":
+            from .files import parse_command_args
+            targets, folder, overwrite = parse_command_args(args)
+            if not file_sender:
+                return "当前环境无法读取文件消息。"
+            return await file_sender(targets, folder, overwrite)
         if action == "swap":
             return await run_swap_command(service, user, args)
         if action == "makeup":
