@@ -52,13 +52,15 @@ NOTIFY_HINTS = {
     "device_offline": "发送“/rci 设备”查看全部教室设备状态。",
     "device_online": "发送“/rci 设备”查看全部教室设备状态。",
     "automation_failed": "发送“/rci 自动化”查看规则，或“/rci 自动化 运行 <规则名>”重新执行。",
+    "app_guard": "发送“/rci 守护”查看应用守护策略与最近事件。",
 }
 
 # 通知类型 → 消息标题里的分类；未列出的按前缀归类，其余都算换课。
-NOTIFY_CATEGORIES = {"device_offline": "设备离线", "device_online": "设备恢复", "automation_failed": "自动化告警"}
+NOTIFY_CATEGORIES = {"device_offline": "设备离线", "device_online": "设备恢复", "automation_failed": "自动化告警",
+                     "app_guard": "应用守护"}
 CATEGORY_PREFIXES = (("personal_course_", "课程提醒"), ("device_", "设备"), ("automation_", "自动化"))
 # 运维群只转发这些前缀的通知。
-OPS_PREFIXES = ("device_", "automation_")
+OPS_PREFIXES = ("device_", "automation_", "app_guard")
 
 
 def is_ops_kind(kind: str | None) -> bool:
@@ -68,7 +70,7 @@ def is_ops_kind(kind: str | None) -> bool:
 def log_kind(kind: str | None) -> str:
     """推送记录里的分类：设备、自动化告警单独标出，其余沿用“swap”。"""
     kind = str(kind or "")
-    if kind.startswith("device_"):
+    if kind.startswith(("device_", "app_guard")):
         return "device"
     if kind.startswith("automation_"):
         return "automation"

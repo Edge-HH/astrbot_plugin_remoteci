@@ -6,7 +6,8 @@ from typing import Awaitable, Callable
 
 from .service import ChatUser, RemoteCiService, ServiceError
 from .makeup import run_makeup_command
-from .operations import run_audit_command, run_automation_command, run_device_command, run_lesson_command
+from .operations import (run_app_guard_command, run_audit_command, run_automation_command, run_device_command,
+                         run_lesson_command)
 from .profiles import run_profile_command
 from .swaps import run_swap_command
 
@@ -53,6 +54,7 @@ HELP = """RemoteCI 指令（/rci 也可写作 /课表）
 /rci 课时 [本月|上月|<开始日期> <结束日期>] [教师名]   课时统计（查他人限管理员）
 /rci 审计 [班级名]   最近 10 条操作记录
 /rci 自动化 [运行|开|关 <规则名>]   自动化规则（管理员）
+/rci 守护 [开|关|延时 <分钟>]   ClassIsland 应用守护（管理员）
 ━ 控制 ━
 /rci 通知 <班级名> <内容>   向教室发送通知
 /rci 发文件 <班级名…|下节课> [下载|文档] [覆盖]   把刚发来（或回复）的文件发到教室电脑，默认桌面
@@ -82,6 +84,7 @@ SUBCOMMANDS = {
     "lessons": "lessons", "课时": "lessons", "课时统计": "lessons", "lesson": "lessons",
     "audit": "audit", "审计": "audit", "操作记录": "audit", "审计日志": "audit",
     "automation": "automation", "自动化": "automation", "规则": "automation",
+    "guard": "guard", "守护": "guard", "应用守护": "guard", "app-guard": "guard",
 }
 
 REMIND_ITEMS = {
@@ -196,6 +199,8 @@ async def run_command(service: RemoteCiService, user: ChatUser, text: str,
             return await run_audit_command(service, user, args)
         if action == "automation":
             return await run_automation_command(service, user, args)
+        if action == "guard":
+            return await run_app_guard_command(service, user, args)
     except ServiceError as ex:
         return str(ex)
     return HELP

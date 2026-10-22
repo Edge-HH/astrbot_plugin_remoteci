@@ -23,17 +23,19 @@ from .client import normalize_base_url
 from .swaps import NOTIFY_HINTS, format_notification, notification_category, short_id
 
 # 需要卡片（或文本推送附带链接）的通知类型。
-CARD_KINDS = {"swap_requested", "swap_forced", "device_offline", "device_online", "automation_failed"}
+CARD_KINDS = {"swap_requested", "swap_forced", "device_offline", "device_online", "automation_failed", "app_guard"}
 # 需要向服务端申请一次性签名链接的通知类型 → 签名链接的 action。
 ACTION_LINK_KINDS = {"swap_requested": ("swap.approve", "swap.reject"), "swap_forced": ("swap.revoke",)}
 # 通知没有 link 字段时，“查看”按钮打开的站内页面。
 DEFAULT_PAGES = {"swap_requested": "/SwapRequests", "swap_forced": "/SwapRequests",
-                 "device_offline": "/Devices", "device_online": "/Devices", "automation_failed": "/Automation"}
+                 "device_offline": "/Devices", "device_online": "/Devices", "automation_failed": "/Automation",
+                 "app_guard": "/AppGuard"}
 VIEW_TITLES = {"swap_requested": "在 RemoteCI 中查看", "swap_forced": "在 RemoteCI 中查看",
-               "device_offline": "查看设备状态", "device_online": "查看设备状态", "automation_failed": "查看规则"}
+               "device_offline": "查看设备状态", "device_online": "查看设备状态", "automation_failed": "查看规则",
+               "app_guard": "查看应用守护"}
 # 飞书卡片标题栏颜色。
 TONES = {"swap_requested": "blue", "swap_forced": "orange", "device_offline": "red", "device_online": "green",
-         "automation_failed": "red"}
+         "automation_failed": "red", "app_guard": "orange"}
 
 DINGTALK_MAX_BUTTONS = 5
 WECOM_MAX_JUMPS = 3
