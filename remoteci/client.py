@@ -115,23 +115,24 @@ class RemoteCiClient:
     async def request(self, binding: dict, method: str, path: str, *, params: dict | None = None,
                       body: Any = None, retry_auth: bool = True,
                       on_auth_changed: Callable[[dict], Awaitable[None]] | None = None,
-                      content: Any = None, headers: dict | None = None, timeout: float | None = None) -> Any:
+                      content: Any = None, headers: dict | None = None, timeout: float | None = None,
+                      raw: bool = False) -> Any:
         """content 不为空时以原始字节或文件对象作为请求体（例如班级头像、分发的文件），headers 追加到请求头；
-        timeout 覆盖默认的整体超时（大文件上传）。"""
+        timeout 覆盖默认的整体超时（大文件上传）；raw=True 时成功响应返回原始字节（例如截图）。"""
         auth = binding.get("auth") or {}
         if auth.get("type") == "session" and auth.get("expires_at", 0) < time.time():
             await self._refresh_and_save(binding, on_auth_changed)
             auth = binding["auth"]
         token = auth.get("api_key") if auth.get("type") == "api_key" else auth.get("access_token")
         try:
-            return await self._raw(method, binding["server_url"], path, token, body, params, content, headers, timeout)
+            return await self._raw(method, binding["server_url"], path, token, body, params, content, headers, timeout, raw)
         except RemoteCiError as ex:
             if ex.status == 401 and retry_auth and auth.get("type") == "session":
                 await self._refresh_and_save(binding, on_auth_changed)
                 if hasattr(content, "seek"):
                     content.seek(0)
                 return await self._raw(method, binding["server_url"], path, binding["auth"]["access_token"], body,
-                                       params, content, headers, timeout)
+                                       params, content, headers, timeout, raw)
             raise
 
     async def _refresh_and_save(self, binding, on_auth_changed) -> None:
@@ -141,7 +142,8 @@ class RemoteCiClient:
 
     async def _raw(self, method: str, base_url: str, path: str, token: str | None,
                    body: Any = None, params: dict | None = None,
-                   content: Any = None, extra_headers: dict | None = None, timeout: float | None = None) -> Any:
+                   content: Any = None, extra_headers: dict | None = None, timeout: float | None = None,
+                   raw: bool = False) -> Any:
         headers = {"Accept": "application/json", **(extra_headers or {})}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -154,6 +156,8 @@ class RemoteCiClient:
                                        data=content,
                                        headers=headers,
                                        timeout=aiohttp.ClientTimeout(total=timeout) if timeout else self._timeout) as resp:
+                if raw and resp.status < 400:
+                    return await resp.read()
                 data = await _read_json(resp)
                 if resp.status >= 400:
                     message, code = _error_message(data, resp.reason or "请求失败")

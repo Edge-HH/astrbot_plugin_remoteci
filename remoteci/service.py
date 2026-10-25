@@ -217,10 +217,11 @@ class RemoteCiService:
         if binding.get("key") in self.store.bindings:
             await self.store.save()
 
-    async def _call(self, binding: dict, method: str, path: str, *, params=None, body=None) -> Any:
+    async def _call(self, binding: dict, method: str, path: str, *, params=None, body=None, **extra) -> Any:
+        """extra 透传给 client.request，例如 timeout（截图等长请求）或 raw=True（下载图片）。"""
         try:
             return await self.client.request(binding, method, path, params=params, body=body,
-                                             on_auth_changed=self._save_auth)
+                                             on_auth_changed=self._save_auth, **extra)
         except RemoteCiError as ex:
             if ex.status == 401 and binding.get("key") in self.store.bindings:
                 await self._mark_auth_failed(binding, str(ex))

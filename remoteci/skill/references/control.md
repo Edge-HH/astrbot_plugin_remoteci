@@ -119,6 +119,16 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 默认不覆盖同名文件，而是自动改名为“名称 (2).扩展名”；只有用户明确要求覆盖时才传 `"overwrite": true`。插件离线的班级会立即显示失败；服务端保留文件 24 小时。
 
+## 屏幕截图
+
+查看教室电脑当前屏幕（全部显示器），常用于确认刚才的远程操作是否生效。需要该班的“屏幕截图”权限（32768，班主任默认拥有）。截图在服务端保留 24 小时，每次截图都会写入操作记录。
+
+1. `POST /api/classes/{classId}/screenshot`（请求体可为空）。服务端让该班教室电脑截屏并等待上传完成，通常几秒，最长约 45 秒。成功返回 201 和 `{id, deviceName, requestedBy, width, height, size, capturedAt, expiresAt, url}`；失败时 503 插件离线、409 插件版本过旧、504 超时、422 截图失败，响应里的 `message` 直接转述给用户。
+2. `GET {url}`（即 `/api/screenshots/{id}`，带同样的鉴权头）下载 PNG，作为图片发给用户。
+3. `GET /api/classes/{classId}/screenshots` 列出该班最近的截图（新到旧）。
+
+截图可能包含学生信息或屏幕上的隐私内容，只在用户明确要求查看某个班的屏幕时截图，不要自行截图；通用 `/api/commands` 不能截图。
+
 ## 先确认再执行
 
 以下操作执行前，先向用户复述目标班级和具体内容，等用户明确同意：

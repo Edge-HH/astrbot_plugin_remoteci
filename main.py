@@ -138,7 +138,8 @@ class RemoteCiPlugin(Star):
         try:
             text = await run_command(self.service, user, event.message_str, lambda: self._first_image(event),
                                      lambda targets, folder, overwrite: self._send_file(event, user, targets, False,
-                                                                                        folder, overwrite))
+                                                                                        folder, overwrite),
+                                     lambda class_ref: self._send_screenshot(event, user, class_ref))
         except RemoteCiError as ex:
             text = f"RemoteCI 请求失败：{ex}"
         except Exception as ex:  # noqa: BLE001
@@ -643,6 +644,33 @@ class RemoteCiPlugin(Star):
         finally:
             if temporary:
                 path.unlink(missing_ok=True)
+
+    @filter.llm_tool(name="remoteci_screenshot")
+    async def tool_screenshot(self, event: AstrMessageEvent, class_name: str = ""):
+        """查看班级电脑的当前屏幕：让教室电脑截图并把图片直接发到当前聊天，常用于确认远程操作是否生效。
+        只在用户明确要求查看某个班的屏幕时调用；需要该班的“屏幕截图”权限（班主任默认拥有）。图片已由工具发出，回复里不要再描述“已发送图片”以外的内容。
+
+        Args:
+            class_name(string): 班级名称，只有一个班级时可留空
+        """
+        return await self._tool(event, lambda user: self._send_screenshot(event, user, class_name or None))
+
+    async def _send_screenshot(self, event: AstrMessageEvent, user: ChatUser, class_ref: str | None) -> str:
+        from .remoteci.screenshots import capture
+
+        text, png = await capture(self.service, user, class_ref)
+        # 部分平台适配器只能发送本地文件或 URL 图片：写到临时文件，发送后删除。
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(png)
+            path = Path(tmp.name)
+        try:
+            await event.send(MessageChain().message(text).file_image(str(path)))
+        except Exception as ex:  # noqa: BLE001 - 平台不支持图片时只回复文字
+            logger.warning(f"RemoteCI 截图发送失败：{ex}")
+            return f"{text}\n截图已保存在 RemoteCI 服务端，但当前聊天平台发送图片失败，请在 WebUI 控制页查看。"
+        finally:
+            path.unlink(missing_ok=True)
+        return "截图已发送。"
 
     @filter.llm_tool(name="remoteci_class_command")
     async def tool_class_command(self, event: AstrMessageEvent, class_name: str, command: int,
