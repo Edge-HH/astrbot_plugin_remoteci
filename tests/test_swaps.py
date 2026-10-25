@@ -20,6 +20,7 @@ class FakeSwapServer:
     def __init__(self):
         self.notifications = []
         self.calls = []
+        self.incoming = []
 
     async def __call__(self, binding, method, path, *, params=None, body=None):
         self.calls.append((method, path, params, body))
@@ -29,7 +30,9 @@ class FakeSwapServer:
             items.sort(key=lambda n: n["createdAt"], reverse=True)
             return items[: int((params or {}).get("limit", 50))]
         if path == "/api/swap-requests":
-            return [REQUEST]
+            return self.incoming or [REQUEST]
+        if path == "/api/swap-requests/seen":
+            return {"pending": 0}
         if path.startswith("/api/swap-requests/") and method == "POST":
             return {**REQUEST, "status": 2 if path.endswith("/approve") else 3, "canDecide": False,
                     "decisionNote": (body or {}).get("note")}
@@ -183,3 +186,56 @@ def test_formatters():
     assert format_notification({"kind": "device_unknown", "title": "x", "body": ""}).startswith("【RemoteCI 设备】")
     replace = {**REQUEST, "mode": 2, "source": None, "subjectName": "数学"}
     assert "→ 数学（王老师）" in format_request(replace)
+
+
+def test_listing_incoming_marks_forced_swaps_seen(tmp_path):
+    async def run():
+        service, fake, sent = make(tmp_path)
+        forced = {**REQUEST, "id": "f0000000-0000-0000-0000-000000000000", "shortId": "f0000000", "status": 6,
+                  "forced": True, "canDecide": False, "canRevoke": True, "needsAction": True}
+        seen = {**forced, "id": "e0000000-0000-0000-0000-000000000000", "shortId": "e0000000", "needsAction": False}
+        fake.incoming = [REQUEST, forced, seen]
+        listing = await run_swap_command(service, PRIVATE, ["待办"])
+        assert "f0000000" in listing and "e0000000" in listing  # 看过的强制换课仍可撤回，照常列出
+        assert ("POST", "/api/swap-requests/seen", None, {"ids": [forced["id"]]}) in fake.calls
+    asyncio.run(run())
+
+
+def test_approve_with_conflicts_asks_for_confirmation_then_acknowledges(tmp_path):
+    from remoteci.client import RemoteCiError
+
+    async def run():
+        service, fake, _ = make(tmp_path)
+        original = fake.__call__
+
+        async def conflicted(binding, method, path, *, params=None, body=None):
+            if path.endswith("/approve") and not (body or {}).get("acknowledgeConflicts"):
+                fake.calls.append((method, path, params, body))
+                raise RemoteCiError(409, "存在需要确认的冲突", "SWAP_CONFLICTS", {"conflicts": [
+                    {"kind": "teacher_clash", "message": "王老师 与 高一2班 第2节 时间重叠", "requiresAcknowledgement": True},
+                    {"kind": "slot_adjusted", "message": "当天已调整", "requiresAcknowledgement": False},
+                ]})
+            return await original(binding, method, path, params=params, body=body)
+
+        service._call = conflicted  # noqa: SLF001
+        reply = await run_swap_command(service, PRIVATE, ["通过", "a1b2c3d4"])
+        assert "王老师 与 高一2班 第2节 时间重叠" in reply and "当天已调整" not in reply
+        assert "/rci 换课 确认通过 a1b2c3d4" in reply
+        reply = await run_swap_command(service, PRIVATE, ["确认通过", "a1b2c3d4", "合班"])
+        assert reply.startswith("已同意换课")
+        assert fake.calls[-1][3] == {"note": "合班", "acknowledgeConflicts": True}
+    asyncio.run(run())
+
+
+def test_revert_and_invalidated_formatting(tmp_path):
+    async def run():
+        service, fake, _ = make(tmp_path)
+        reply = await run_swap_command(service, PRIVATE, ["撤回换课", "a1b2c3d4"])
+        assert reply.startswith("已撤回换课") and fake.calls[-1][1] == "/api/swap-requests/a1b2c3d4/revert"
+    asyncio.run(run())
+    invalid = format_request({**REQUEST, "status": 8, "invalidReason": "该节的基础课表已变化"})
+    assert "已失效" in invalid and "失效原因：该节的基础课表已变化" in invalid
+    pending = format_request({**REQUEST, "status": 2, "delivery": "pending"})
+    assert "教室电脑暂未确认" in pending
+    note = format_notification({"kind": "swap_invalidated", "title": "换课已失效", "body": "原因"})
+    assert "重新申请" in note

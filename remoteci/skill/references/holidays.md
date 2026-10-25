@@ -1,3 +1,11 @@
+# 学期与调休
+
+## 学期与教学周
+
+`GET /api/settings/semester`（任何已登录账号）返回 `{startDate, syncToClassrooms, currentWeek?}`。学期开始日期所在周（周一起）为第 1 教学周，`currentWeek` 是本周的教学周，奇数为单周、偶数为双周；`startDate` 为 null 表示管理员尚未设置。
+
+系统管理员用 `PUT /api/settings/semester`，body `{"startDate":"2026-09-01","syncToClassrooms":true}` 设置（`startDate` 传 null 清除）。修改前先复述日期并得到确认。它决定：自定义课程的单双周/多周轮换、按档案推算课表时的轮换周；`syncToClassrooms` 为 true 时还会写入各教室 ClassIsland 的“单周起始日期”并清除教室本机的轮换偏移，使全校轮换一致。
+
 # 调休
 
 RemoteCI 服务端自动从 holiday-cn 获取法定节假日和调休安排，并下发给各教室电脑：

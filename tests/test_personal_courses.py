@@ -58,3 +58,33 @@ def test_personal_courses_have_stable_snapshot_ids_and_no_duplicate_bot_reminder
     assert len(to_snapshot(days)[day]) == 2
     assert before_class_due(now=datetime(2030, 1, 1, 7, 55, tzinfo=timezone(timedelta(hours=8))),
                             scope="self", lessons=days[day], minutes=10, holiday_today=False) == []
+
+
+def test_weekly_courses_send_weekday_time_and_rotation():
+    async def run():
+        service = FakeService()
+        service._tz_params = lambda: {"timeZoneOffsetMinutes": 480}
+        reply = await save_course(service, PRIVATE, "社团课", week_day="周三", start_time="14:00", end_time="14:45", weeks="双周")
+        assert "已添加" in reply
+        body = service.calls[-1][3]["body"]
+        assert (body["weekDay"], body["startTime"], body["endTime"]) == (3, "14:00", "14:45")
+        assert (body["weekCountDiv"], body["weekCountDivTotal"], body["timeZoneOffsetMinutes"]) == (2, 2, 480)
+        assert "startsAt" not in body
+        await save_course(service, PRIVATE, "晚自习", week_day="星期日", start_time="9:05", end_time="10:00", weeks="三周轮换第2周")
+        body = service.calls[-1][3]["body"]
+        assert (body["weekDay"], body["startTime"], body["weekCountDiv"], body["weekCountDivTotal"]) == (0, "09:05", 2, 3)
+        calls = len(service.calls)
+        assert "星期" in await save_course(service, PRIVATE, "x", week_day="周八", start_time="14:00", end_time="14:45")
+        assert "星期" in await save_course(service, PRIVATE, "x", week_day="周一", start_time="15:00", end_time="14:45")
+        assert "周次" in await save_course(service, PRIVATE, "x", week_day="周一", start_time="14:00", end_time="14:45", weeks="三周轮换第4周")
+        assert len(service.calls) == calls
+    asyncio.run(run())
+
+
+def test_week_parsers():
+    from remoteci.personal_courses import parse_week_day, parse_week_rule
+    assert [parse_week_day(x) for x in ("周一", "每周五", "礼拜天", "7", "1", "周八")] == [1, 5, 0, 0, 1, None]
+    assert parse_week_rule("每周") == (0, 2)
+    assert parse_week_rule("单周") == (1, 2)
+    assert parse_week_rule("四周轮换第4周") == (4, 4)
+    assert parse_week_rule("隔周") is None

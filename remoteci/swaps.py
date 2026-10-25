@@ -3,7 +3,8 @@
 服务端接口（Bearer 认证，API Key 或登录令牌都可）：
 - GET  /api/me/notifications?after=<ISO>   个人通知（换课申请、审批结果、强制换课、设备与自动化告警等）
 - GET  /api/swap-requests?box=incoming|outgoing&status=
-- POST /api/swap-requests/{id 或 8 位短编号}/approve|reject|cancel|revoke
+- POST /api/swap-requests/{id 或 8 位短编号}/approve|reject|cancel|revoke|revert
+通过时遇到需要确认的冲突（409 SWAP_CONFLICTS）先把冲突告诉用户，用户确认后带 acknowledgeConflicts 再通过。
 发起申请需要逐节选课，留在 WebUI 和手机 App 完成；聊天里只做查看与处理。
 运维群（会话角色 ops_group）用独立游标转发所绑定管理员账号的 device_* 与 automation_* 通知。
 """
@@ -24,15 +25,18 @@ if TYPE_CHECKING:  # pragma: no cover
 PERMISSION_REQUEST_SWAP = 4096
 POLL_SECONDS = 60
 
-STATUS_TEXT = {1: "待审批", 2: "已通过", 3: "已拒绝", 4: "已撤销", 5: "已过期", 6: "已强制换课", 7: "已撤回"}
+STATUS_TEXT = {1: "待审批", 2: "已通过", 3: "已拒绝", 4: "已撤销", 5: "已过期", 6: "已强制换课", 7: "已撤回", 8: "已失效"}
+ERROR_CONFLICTS = "SWAP_CONFLICTS"
 WEEKDAYS = "一二三四五六日"
 
 SWAP_SUBCOMMANDS = {
     "待办": "incoming", "待处理": "incoming", "待我处理": "incoming", "收到": "incoming", "todo": "incoming",
     "我的": "outgoing", "我发起的": "outgoing", "mine": "outgoing",
     "通过": "approve", "同意": "approve", "批准": "approve", "approve": "approve",
+    "确认通过": "approve!", "仍然通过": "approve!", "仍然同意": "approve!",
     "拒绝": "reject", "驳回": "reject", "reject": "reject",
     "撤回": "revoke", "revoke": "revoke",
+    "撤回换课": "revert", "revert": "revert",
     "撤销": "cancel", "取消": "cancel", "cancel": "cancel",
 }
 
@@ -40,8 +44,10 @@ SWAP_HELP = """换课申请（发起请在 RemoteCI WebUI 或手机 App 的“�
 /rci 换课 待办   发给我的换课申请
 /rci 换课 我的   我发起的换课申请
 /rci 换课 通过 <编号> [备注]
+/rci 换课 确认通过 <编号> [备注]   已看过冲突提示，仍要通过
 /rci 换课 拒绝 <编号> [备注]
 /rci 换课 撤回 <编号>   撤回别人对我的强制换课
+/rci 换课 撤回换课 <编号>   班主任或管理员撤回已生效的换课
 /rci 换课 撤销 <编号>   撤销我发起的待审批申请
 收到换课提醒后，也可以在私聊直接回复“同意”“拒绝 理由”或“撤回”。"""
 
@@ -49,6 +55,7 @@ SWAP_HELP = """换课申请（发起请在 RemoteCI WebUI 或手机 App 的“�
 NOTIFY_HINTS = {
     "swap_requested": "直接回复“同意”或“拒绝 理由”即可处理（编号 {short}），也可发送“/rci 换课 通过 {short}”。",
     "swap_forced": "如未事先沟通，直接回复“撤回”即可恢复课表（编号 {short}），也可发送“/rci 换课 撤回 {short}”。",
+    "swap_invalidated": "如仍需换课，请在 RemoteCI WebUI 或手机 App 重新申请。",
     "device_offline": "发送“/rci 设备”查看全部教室设备状态。",
     "device_online": "发送“/rci 设备”查看全部教室设备状态。",
     "automation_failed": "发送“/rci 自动化”查看规则，或“/rci 自动化 运行 <规则名>”重新执行。",
@@ -108,7 +115,20 @@ def format_request(item: dict) -> str:
     lines = [head, f"  {what}", f"  理由：{item.get('reason') or ''}"]
     if item.get("decisionNote"):
         lines.append(f"  备注：{item['decisionNote']}")
+    if item.get("delivery") == "pending":
+        lines.append("  教室电脑暂未确认，上线后自动生效")
+    if item.get("status") == 8 and item.get("invalidReason"):
+        lines.append(f"  失效原因：{item['invalidReason']}")
     return "\n".join(lines)
+
+
+def conflict_text(ex: RemoteCiError) -> str | None:
+    """换课需要确认的冲突（409 SWAP_CONFLICTS）：返回列出冲突的说明；其他错误返回 None。"""
+    if ex.code != ERROR_CONFLICTS:
+        return None
+    lines = [f"· {x.get('message')}" for x in ex.data.get("conflicts") or []
+             if isinstance(x, dict) and x.get("requiresAcknowledgement") and x.get("message")]
+    return "\n".join(lines) or ex.message
 
 
 def notification_category(kind: str | None) -> str:
@@ -226,8 +246,9 @@ async def run_swap_command(service: "RemoteCiService", user: "ChatUser", args: l
         if action in ("incoming", "outgoing"):
             return await list_requests(service, binding, action)
         if len(args) < 2:
-            return f"用法：/rci 换课 {args[0]} <编号>" + (" [备注]" if action in ("approve", "reject") else "")
-        return await decide(service, binding, action, args[1], " ".join(args[2:]))
+            return f"用法：/rci 换课 {args[0]} <编号>" + (" [备注]" if action in ("approve", "approve!", "reject") else "")
+        acknowledge = action == "approve!"
+        return await decide(service, binding, "approve" if acknowledge else action, args[1], " ".join(args[2:]), acknowledge)
     except RemoteCiError as ex:
         return f"操作失败：{ex}"
 
@@ -243,16 +264,41 @@ async def list_requests(service: "RemoteCiService", binding: dict, box: str, pen
         items = items[:10]
     if not items:
         return "没有待你处理的换课申请。" if box == "incoming" else "你还没有发起过换课申请。"
+    if box == "incoming":
+        await _mark_forced_seen(service, binding, items)
     title = "发给你的换课申请：" if box == "incoming" else "你发起的换课申请："
     return title + "\n" + "\n".join(format_request(x) for x in items)
 
 
-async def decide(service: "RemoteCiService", binding: dict, action: str, request_id: str, note: str = "") -> str:
-    body = {"note": note} if action in ("approve", "reject") and note else ({} if action in ("approve", "reject") else None)
-    item = await service._call(binding, "POST", f"/api/swap-requests/{request_id.strip()}/{action}",
-                               body=body if body is not None else {})
+async def _mark_forced_seen(service: "RemoteCiService", binding: dict, items: list) -> None:
+    """强制换课看过即处理：在聊天里列出后上报服务端，不再计入“待我处理”（仍可撤回）。"""
+    ids = [x["id"] for x in items if x.get("canRevoke") and x.get("needsAction") and x.get("id")]
+    if not ids:
+        return
+    try:
+        await service._call(binding, "POST", "/api/swap-requests/seen", body={"ids": ids})
+    except RemoteCiError:
+        pass  # 旧版服务端没有该接口，不影响列表展示
+
+
+async def decide(service: "RemoteCiService", binding: dict, action: str, request_id: str, note: str = "",
+                 acknowledge_conflicts: bool = False) -> str:
+    body: dict = {}
+    if action in ("approve", "reject") and note:
+        body["note"] = note
+    if action == "approve" and acknowledge_conflicts:
+        body["acknowledgeConflicts"] = True
+    try:
+        item = await service._call(binding, "POST", f"/api/swap-requests/{request_id.strip()}/{action}", body=body)
+    except RemoteCiError as ex:
+        conflicts = conflict_text(ex) if action == "approve" else None
+        if conflicts is None:
+            raise
+        rid = request_id.strip()
+        return f"这次换课存在需要确认的冲突：\n{conflicts}\n确认仍要通过，请发送“/rci 换课 确认通过 {rid}”。"
     done = {"approve": "已同意换课，课表已临时调整。", "reject": "已拒绝换课申请。",
-            "revoke": "已撤回强制换课，课表已恢复。", "cancel": "已撤销换课申请。"}[action]
+            "revoke": "已撤回强制换课，课表已恢复。", "revert": "已撤回换课，课表已恢复。",
+            "cancel": "已撤销换课申请。"}[action]
     return done + ("\n" + format_request(item) if isinstance(item, dict) else "")
 
 

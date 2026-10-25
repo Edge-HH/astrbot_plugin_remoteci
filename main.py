@@ -389,23 +389,29 @@ class RemoteCiPlugin(Star):
         return await self._tool(event, lambda user: list_courses(self.service, user))
 
     @filter.llm_tool(name="remoteci_save_personal_course")
-    async def tool_save_personal_course(self, event: AstrMessageEvent, subject: str, starts_at: str,
-                                        ends_at: str, location: str = "", reminder_minutes: int = 10,
-                                        notify_at_start: bool = True, course_id: str = ""):
-        """在私聊中创建或修改本人自定义课程，并同步所有设备。修改时先查询课程，保留用户未要求修改的字段。
+    async def tool_save_personal_course(self, event: AstrMessageEvent, subject: str, week_day: str = "",
+                                        start_time: str = "", end_time: str = "", weeks: str = "每周",
+                                        starts_at: str = "", ends_at: str = "", location: str = "",
+                                        reminder_minutes: int = 10, notify_at_start: bool = True, course_id: str = ""):
+        """在私聊中创建或修改本人自定义课程，并同步所有设备。固定每周上的课传星期和时刻；只上一次的安排传含时区的起止时间。修改时先查询课程，保留用户未要求修改的字段。
 
         Args:
             subject(string): 课程名称
-            starts_at(string): 含时区的开始时间，如 2026-10-17T08:00:00+08:00
-            ends_at(string): 含时区的结束时间，必须晚于开始且时长不超过24小时
+            week_day(string): 每周重复时的星期，如 周三；单次课程留空
+            start_time(string): 每周重复时的开始时刻，如 14:00
+            end_time(string): 每周重复时的结束时刻，如 14:45，须在同一天内
+            weeks(string): 周次：每周、单周、双周，或 三周轮换第2周（最多四周轮换）；单双周需管理员已设置学期开始日期
+            starts_at(string): 单次课程的含时区开始时间，如 2026-10-17T08:00:00+08:00；每周课程留空
+            ends_at(string): 单次课程的含时区结束时间，须在当天内结束；每周课程留空
             location(string): 地点，可留空
             reminder_minutes(int): 提前提醒分钟数，1至10080，-1关闭课前提醒
             notify_at_start(bool): 是否在上课时提醒
             course_id(string): 新建留空，修改传查询所得完整编号
         """
         from .remoteci.personal_courses import save_course
-        return await self._tool(event, lambda user: save_course(self.service, user, subject, starts_at, ends_at,
-                                location, reminder_minutes, notify_at_start, course_id))
+        return await self._tool(event, lambda user: save_course(
+            self.service, user, subject, starts_at, ends_at, location, reminder_minutes, notify_at_start, course_id,
+            week_day=week_day, start_time=start_time, end_time=end_time, weeks=weeks))
 
     @filter.llm_tool(name="remoteci_delete_personal_course")
     async def tool_delete_personal_course(self, event: AstrMessageEvent, course_id: str):
@@ -451,21 +457,23 @@ class RemoteCiPlugin(Star):
         return await self._tool(event, run)
 
     @filter.llm_tool(name="remoteci_swap_decide")
-    async def tool_swap_decide(self, event: AstrMessageEvent, request_id: str, action: str, note: str = ""):
-        """处理换课申请。通过或撤回前先向用户复述两节课并确认。
+    async def tool_swap_decide(self, event: AstrMessageEvent, request_id: str, action: str, note: str = "",
+                               acknowledge_conflicts: bool = False):
+        """处理换课申请。通过或撤回前先向用户复述两节课并确认。通过时如果返回需要确认的冲突（例如老师同一时间要在两个班上课），把冲突原样告诉用户，用户明确同意后再以 acknowledge_conflicts=true 重新调用，不要自行确认。
 
         Args:
             request_id(string): 换课申请编号（8 位短编号或完整 ID）
-            action(string): approve 通过、reject 拒绝、revoke 撤回别人对我的强制换课、cancel 撤销我发起的待审批申请
+            action(string): approve 通过、reject 拒绝、revoke 撤回别人对我的强制换课、revert 班主任或管理员撤回已生效的换课、cancel 撤销我发起的待审批申请
             note(string): 通过或拒绝时的备注，可留空
+            acknowledge_conflicts(boolean): 用户已确认冲突提示、仍要通过时为 true
         """
         from .remoteci.swaps import decide
 
         async def run(user):
-            if action not in ("approve", "reject", "revoke", "cancel"):
-                return "action 只能是 approve、reject、revoke 或 cancel。"
+            if action not in ("approve", "reject", "revoke", "revert", "cancel"):
+                return "action 只能是 approve、reject、revoke、revert 或 cancel。"
             binding = self.service.require_binding(user)
-            return await decide(self.service, binding, action, request_id, note)
+            return await decide(self.service, binding, action, request_id, note, acknowledge_conflicts)
         return await self._tool(event, run)
 
     @filter.llm_tool(name="remoteci_holidays")

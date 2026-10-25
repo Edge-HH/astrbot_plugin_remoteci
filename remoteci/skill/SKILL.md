@@ -111,7 +111,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 
 ## 8. 调休与节假日
 
-用户问“哪天放假”“哪天调休上学、上周几的课”，或者管理员要修改调休补课安排、关闭调休适配时，先读 [holidays.md](references/holidays.md)。
+用户问“哪天放假”“哪天调休上学、上周几的课”“这周是第几周/单周还是双周”，或者管理员要设置学期开始日期、修改调休补课安排、关闭调休适配时，先读 [holidays.md](references/holidays.md)。
 
 ## 9. 集控运维（系统管理员、班主任）
 
@@ -124,13 +124,15 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 | `401` | 凭据无效或过期：令牌先续期；API Key 可能已吊销，或账号失去了 API 权限 |
 | `403` | 当前账号在该班没有对应权限，或该操作只允许系统管理员 |
 | `404` | 对象不存在，或插件尚未同步数据 |
-| `409` | 冲突：用户名已存在、最后一个管理员，或换课时课表已被别人修改（`SCHEDULE_STALE`）；换课申请的课位已变化（`SWAP_SLOT_CHANGED`）、申请已被处理（`SWAP_STATE_CONFLICT`），或当天这节课的强制换课已被撤回（`SWAP_FORCE_LOCKED`） |
+| `409` | 冲突：用户名已存在、最后一个管理员，或换课时课表已被别人修改（`SCHEDULE_STALE`）；换课申请的课位已变化（`SWAP_SLOT_CHANGED`）、申请已被处理（`SWAP_STATE_CONFLICT`）、当天这节课的强制换课已被撤回（`SWAP_FORCE_LOCKED`），或存在需要用户确认的冲突（`SWAP_CONFLICTS`，把 `conflicts[].message` 告诉用户，同意后带 `acknowledgeConflicts: true` 重试） |
 | `400` | 请求无效；换课申请两节课都不是自己的（`SWAP_NOT_OWN`），或目标班级没有该学科（`SWAP_SUBJECT_MISSING`） |
 | `503` / `504` | 教室端插件离线，或执行超时 |
 
 ### 自定义课程（仅本人）
 
 - 列表：`GET /api/me/schedule/courses`。创建：`POST /api/me/schedule/courses`。修改：`PUT /api/me/schedule/courses/{id}`（完整替换，先查询并保留其他字段）。删除：`DELETE /api/me/schedule/courses/{id}`。
-- 请求：`{subject, location, startsAt, endsAt, reminderMinutes, notifyAtStart}`。时间为带偏移的 ISO 8601，结束晚于开始且最长 24 小时；名称 1–100 字，地点最多 200 字。`reminderMinutes` 为 1–10080 分钟，null 表示关闭；`notifyAtStart` 控制上课提醒。响应额外带稳定 `id`。
-- 服务端按认证账号隔离，管理自定义课程不需要班级权限。`/api/me/schedule` 中 `source: "personal"` 的条目与任教课程一起显示；其 `classId` 为全零 GUID，不可当成真实班级或提交换课；按 `courses[].personalCourseId` 识别私人课程。
+- 每周重复的课程：`{subject, location, weekDay, startTime, endTime, weekCountDiv, weekCountDivTotal, timeZoneOffsetMinutes, reminderMinutes, notifyAtStart}`。`weekDay` 0=周日、1=周一…6=周六；`startTime`/`endTime` 为 `HH:mm`，同一天内结束；`timeZoneOffsetMinutes` 为用户时区偏移（东八区 `480`），修改时保留原值。周次：`weekCountDiv` 0 为每周，1/2 单周，2/2 双周，`weekCountDivTotal` 为 3 或 4 时表示三/四周轮换中的第几周。单双周按管理员设置的学期开始日期算教学周；`GET /api/settings/semester` 的 `startDate` 为 null 时只能选每周（否则 400），`currentWeek` 是本周教学周。
+- 只发生一次的安排（如“明天下午加一节自习”）：不传 `weekDay`，传带偏移的 ISO 8601 `startsAt`/`endsAt`（须在当天内结束），服务端存为单次课程，响应带 `date`。
+- 名称 1–100 字，地点最多 200 字。`reminderMinutes` 为 1–10080 分钟，null 表示关闭；`notifyAtStart` 控制上课提醒。响应额外带稳定 `id`、`summary`（如“每周三 14:00–15:00 · 单周”，回答时直接引用）和下一次课的 `startsAt`/`endsAt`。
+- 服务端按认证账号隔离，管理自定义课程不需要班级权限。`/api/me/schedule` 中 `source: "personal"` 的条目与任教课程一起显示；其 `classId` 为全零 GUID，不可当成真实班级或提交换课；按 `courses[].personalCourseId` 识别私人课程，同一课程每周各出现一次。
 - 课前和上课提醒由服务端持久化到个人通知并推送。AstrBot 使用专用 `remoteci_personal_courses`、`remoteci_save_personal_course`、`remoteci_delete_personal_course` 工具，`reminder_minutes=-1` 表示关闭课前提醒。所有自定义课程管理和个人日程查询都应在私聊中执行，不能把私人课程或个人通知输出到群聊。

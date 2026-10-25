@@ -39,7 +39,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 - `targetIndex`：交换时必填。
 - `replacementSubjectId`：替换时必填，取自课表的 `subjects[]`。
 - `expectedRevision`：当天的 `days[].revision`，用来防止覆盖别人刚做的修改。
-- `permanent`：`true` 时写入源课表，之后每周都生效；默认 `false`，只改当天。
+- `permanent`：`true` 时写入源课表，之后每周都生效（当天已有临时层时写它的来源课表）；默认 `false`，只改当天。临时换课会被记成该班的调课记录（`origin: direct`），可在 `GET /api/classes/{classId}/schedule-adjustments` 查看，见 [swap-requests.md](swap-requests.md#调课记录)。
 
 先 `GET /api/schedule` 取得 `index`、`revision` 和科目 ID 再提交。返回 `409 SCHEDULE_STALE` 说明有人刚改过课表，重新读取后再提交。
 

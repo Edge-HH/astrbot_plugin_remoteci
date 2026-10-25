@@ -18,11 +18,13 @@ DEVICE_NAME = "AstrBot"
 
 
 class RemoteCiError(Exception):
-    def __init__(self, status: int, message: str, code: str = ""):
+    def __init__(self, status: int, message: str, code: str = "", data: dict | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        # 完整错误体，例如换课冲突的 conflicts 列表。
+        self.data = data or {}
 
     def __str__(self) -> str:
         hint = {
@@ -161,7 +163,7 @@ class RemoteCiClient:
                 data = await _read_json(resp)
                 if resp.status >= 400:
                     message, code = _error_message(data, resp.reason or "请求失败")
-                    raise RemoteCiError(resp.status, message, code)
+                    raise RemoteCiError(resp.status, message, code, data if isinstance(data, dict) else None)
                 return data
         except RemoteCiError:
             raise
