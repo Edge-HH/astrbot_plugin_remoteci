@@ -20,6 +20,8 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 | 1 | 换课 | `scheduleChange`，见下 | 16 |
 | 21 | 设置科目教师 | `subjectTeacher`：`{"subjectId":"…","teacherName":"王明"}`，`teacherName` 为空表示清除 | 16 |
 | 4 | 显示 / 隐藏主界面 | `mainMenuVisible`：`true` 或 `false` | 256 |
+| 29 | 上传主界面文件 | `mainWindowLayout`，见下 | 256 |
+| 30 | 获取当前主界面文件 | 无；`data` 为 `{"name","layoutJson","layouts","isManagementMode"}` 的 JSON 字符串 | 256 |
 | 6 | 音量 | `volume`：`{"level":0-100,"muted":false}`，两项都可选 | 32 |
 | 5 | 电源 | `powerAction`：`1` 关机、`2` 重启、`3` 睡眠、`4` 休眠 | 32 |
 | 7 | 运行插件扩展 | `extensionId`，以及可选的 `extensionArgs` 键值对；扩展列表来自 `GET /api/extensions`。参数按扩展声明校验：数字须在 `min`/`max` 内，开关只能是 `"true"`/`"false"`，选项须是 `options` 之一 | 128 |
@@ -42,6 +44,14 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 - `permanent`：`true` 时写入源课表，之后每周都生效（当天已有临时层时写它的来源课表）；默认 `false`，只改当天。临时换课会被记成该班的调课记录（`origin: direct`），可在 `GET /api/classes/{classId}/schedule-adjustments` 查看，见 [swap-requests.md](swap-requests.md#调课记录)。
 
 先 `GET /api/schedule` 取得 `index`、`revision` 和科目 ID 再提交。返回 `409 SCHEDULE_STALE` 说明有人刚改过课表，重新读取后再提交。
+
+`mainWindowLayout` 的字段（主界面文件即 ClassIsland“主界面”设置的组件配置 `Config/ComponentLayouts/<名称>.json`）：
+
+- `layoutJson`：文件内容，必须是含 `Lines` 数组的 JSON 对象，不超过 2 MB。可先用命令 30 获取一份当前文件作为模板。
+- `mode`：`1` 覆盖设备当前使用的主界面文件并立即生效；`2` 新建文件。
+- `name`：新建时的文件名（不含 `.json`，最长 64 字符）；同名文件已存在时拒绝，不会覆盖。
+- `activate`：新建后是否立即使用，默认 `true`；覆盖时忽略。
+- 设备处于 ClassIsland 集控模式时只能获取、不能上传。
 
 ### 软件与设备维护（仅系统管理员）
 

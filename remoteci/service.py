@@ -36,7 +36,7 @@ ROLE_NAMES = {ROLE_AUTO: "自动", ROLE_NONE: "不推送", ROLE_TEACHER: "老师
               ROLE_CLASS_GROUP: "班级群", ROLE_OPS_GROUP: "运维群"}
 
 # 需要用户在对话中明确确认后才执行的命令编号（与 skill 的“先确认再执行”一致）。
-DANGEROUS_COMMANDS = {5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23}
+DANGEROUS_COMMANDS = {5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 29}
 # 与 RemoteCI 服务端 NotificationRequest.RollingSuggestionThreshold 一致。
 ROLLING_SUGGESTION_THRESHOLD = 30
 API_METHODS = {"GET", "POST", "PUT", "DELETE"}
