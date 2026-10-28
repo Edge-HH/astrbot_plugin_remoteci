@@ -9,7 +9,7 @@
 
 ## 选课：`GET /api/swap-requests/catalog`
 
-返回所有班级今天起七天、已叠加临时任课老师的课表，以及本人任教的学科：
+返回所有班级（已叠加调课）的可选日期范围与今天起 7 天的课程，以及本人任教的学科。换课可选今天起 30 天内的任意一天：
 
 ```json
 {
@@ -18,6 +18,7 @@
   "mySubjects": ["数学"],
   "classes": [{
     "classId": "…", "className": "高一1班", "subjects": ["数学", "英语"],
+    "minDate": "2026-10-06", "maxDate": "2026-11-04", "myDates": ["2026-10-06", "2026-10-20"],
     "days": [{ "date": "2026-10-06", "courses": [
       { "index": 2, "label": "第3节", "subject": "数学", "teacher": "王老师", "startTime": "10:00", "mine": true }
     ]}]
@@ -25,7 +26,9 @@
 }
 ```
 
-一节课用 `{classId, date, index}` 表示，三个值都从这里取，不要猜。
+`minDate`～`maxDate`（含）是可选日期，`myDates` 是其中本人有课的日期；`days` 只含今天起 7 天。更远的日期用 `GET /api/swap-requests/catalog/day?classId=…&date=yyyy-MM-dd` 读取当天课程（返回 `{date, courses[]}`，放假或没有课时 `courses` 为空；超出范围或教室端插件过旧、未同步该日时返回 400 和中文说明）。
+
+一节课用 `{classId, date, index}` 表示，三个值都从这里或按天读取的结果中取，不要猜。
 
 ## 发起：`POST /api/swap-requests`
 

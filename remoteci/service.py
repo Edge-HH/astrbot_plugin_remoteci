@@ -361,7 +361,7 @@ class RemoteCiService:
         for d in dates:
             iso = d.isoformat()
             if iso not in days:
-                parts.append(f"{title} · {sch.describe_date(iso, today)}\n超出服务端提供的七天范围。")
+                parts.append(f"{title} · {sch.describe_date(iso, today)}\n超出服务端提供的课表范围（插件同步的班级为今天起 30 天，按档案推算为 7 天）。")
                 continue
             holiday, reason = self.holidays.check(d, self.store.state["holidays"])
             text = sch.format_day(title, iso, days[iso], today, show_class=show_class, show_teacher=show_teacher,

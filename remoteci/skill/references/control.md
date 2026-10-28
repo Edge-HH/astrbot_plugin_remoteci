@@ -35,7 +35,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 `scheduleChange` 的字段：
 
-- `date`：七天内的 `yyyy-MM-dd`。
+- `date`：今天起 30 天内的 `yyyy-MM-dd`（旧版插件只接受 7 天内），当天 `revision` 取自 `GET /api/schedule`。
 - `mode`：`1` 交换、`2` 替换。
 - `sourceIndex`：原节次在当天 `courses` 中从 0 开始的位置。
 - `targetIndex`：交换时必填。

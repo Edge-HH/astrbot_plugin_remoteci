@@ -212,7 +212,7 @@ class Change:
 def diff_snapshots(old: dict, new: dict, from_date: str, *, track_teacher: bool = False) -> list[Change]:
     """比较两次快照中同时存在、且不早于 from_date 的日期。
 
-    服务端课表是滚动七天窗口，新滚入或滚出的日期不算变动。
+    服务端课表是滚动窗口（插件同步的班级今天起 30 天，旧版插件与按档案推算为 7 天），新滚入或滚出的日期不算变动。
     任一快照中按档案推算（estimated）的班级整体跳过：推算课表只是预估，插件同步实际课表时不算变动。
     """
     estimated = {lesson.get("class_id") for snapshot in (old, new) for lessons in snapshot.values()

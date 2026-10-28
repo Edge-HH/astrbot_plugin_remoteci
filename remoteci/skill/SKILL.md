@@ -72,7 +72,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/auth/login" -H "Content-Type: applicat
 以下请求都带 `?classId=<id>`，班级 ID 取自 `classes[]`；省略时服务端使用该账号的第一个可访问班级。服务端没有“默认班级”，账号不属于任何班级时 `classes[]` 为空。
 
 - `GET /api/me/classes`：列出可访问的班级。
-- `GET /api/schedule?classId=…`：今天起七天的课表。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。插件上线过的班级始终返回最后一次同步的课表（插件离线也一样）；插件从未同步过课表的班级由服务端按该班当前档案推算，此时返回 `"source":"profile"`：只是预估，回答时说明“按班级档案推算”，其 `revision` 不能用于换课。
+- `GET /api/schedule?classId=…`：今天起的课表（插件同步的班级 30 天，旧版插件与按档案推算为 7 天；回答“本周”只看前 7 天）。返回 `days[]`，每天有 `date`、`revision` 和 `courses[]`；每节课含 `index`、`label`、`subject`、`startTime`、`endTime`、`teacher`。另有 `subjects[]`。插件上线过的班级始终返回最后一次同步的课表（插件离线也一样）；插件从未同步过课表的班级由服务端按该班当前档案推算，此时返回 `"source":"profile"`：只是预估，回答时说明“按班级档案推算”，其 `revision` 不能用于换课。
 - `GET /api/state?classId=…`：当前课堂状态。`currentState` 取值：`1` 上课、`2` 课间、`3` 放学、`4` 预备、`0` 无课；另有 `currentSubject`、`nextClassSubject`、`onClassLeftTime`。
 - `GET /api/extensions?classId=…`：本班可运行的插件扩展。
 - `GET /api/extension-groups?classId=…`：本班设备上报的扩展插件分组及其设置字段；有权修改该插件设置时还返回当前值 `values` 和 `canEditSettings: true`；`allowClassAdmin` 表示该插件是否已开放给班主任自行管理。修改与开放方法见 [control.md](references/control.md#扩展插件设置)。
