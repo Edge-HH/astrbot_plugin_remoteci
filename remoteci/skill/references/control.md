@@ -57,17 +57,14 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 
 以下命令要求系统管理员，并且教室端插件声明了对应能力：
 
-其他 ClassIsland 插件接入 RemoteCI 扩展前，教室端会弹窗询问是否允许；未授权插件的扩展不会出现在扩展清单中，执行时返回“扩展功能不存在”。可用命令 34 远程保持授权。
-
 | 编号 | 操作 | 载荷 |
 | ---: | --- | --- |
 | 12 | 刷新软件版本清单 | 无 |
 | 10 | 升级插件 | `softwareUpgrade`：`{"pluginIds":["…"],"force":false}`，`pluginIds` 省略表示全部插件 |
 | 11 | 升级 ClassIsland | 无 |
 | 20 | 重启 ClassIsland（不重启 Windows） | 无 |
-| 13 / 14 / 15 | 安装 / 卸载 / 启停插件 | `pluginManagement`：`{"action":1 安装 \| 2 卸载 \| 3 启用 \| 4 禁用,"pluginIds":["…"],"restartAfter":false,"grantExtensionAccess":false}`；安装时 `grantExtensionAccess:true` 同时授权这些插件接入 RemoteCI 扩展，教室端不再弹窗询问 |
+| 13 / 14 / 15 | 安装 / 卸载 / 启停插件 | `pluginManagement`：`{"action":1 安装 \| 2 卸载 \| 3 启用 \| 4 禁用,"pluginIds":["…"],"restartAfter":false}` |
 | 31 | 安装 / 更新服务端中转的 `.cipx` 插件包 | 只能在 WebUI 发起（“安装插件 / 升级插件”开启“服务端预下载”，或“从 CIPX 安装”）；`/api/commands` 会拒绝，服务端需先登记下载权限 |
-| 34 | 保持 / 解除保持插件的扩展接入授权 | `extensionAccess`：`{"action":1 保持授权 \| 2 解除保持,"pluginIds":["…"]}`，1–100 个插件 Id。保持授权＝授权并拒绝教室端取消授权（插件未安装也生效）；解除保持只去掉限制，授权不变。需要能力 `extensions.access` |
 | 16 | 远程插件管理策略（WebUI 已不再提供入口，仅为旧客户端保留） | `pluginManagementPolicy`：`{"allowRemoteInstall":true,"allowRemoteUninstall":true}` |
 | 17 | 分发 ClassIsland 档案 | `profileDistribution`，见下 |
 | 18 | 新增或替换时间表 | `timeLayoutUpdate`，见下 |
