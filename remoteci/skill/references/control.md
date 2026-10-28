@@ -64,6 +64,7 @@ curl -fsS -X POST "$REMOTECI_BASE_URL/api/commands?classId=$CLASS_ID" \
 | 11 | 升级 ClassIsland | 无 |
 | 20 | 重启 ClassIsland（不重启 Windows） | 无 |
 | 13 / 14 / 15 | 安装 / 卸载 / 启停插件 | `pluginManagement`：`{"action":1 安装 \| 2 卸载 \| 3 启用 \| 4 禁用,"pluginIds":["…"],"restartAfter":false}` |
+| 31 | 安装 / 更新服务端中转的 `.cipx` 插件包 | 只能在 WebUI 发起（“安装插件 / 升级插件”开启“服务端预下载”，或“从 CIPX 安装”）；`/api/commands` 会拒绝，服务端需先登记下载权限 |
 | 16 | 远程插件管理策略（WebUI 已不再提供入口，仅为旧客户端保留） | `pluginManagementPolicy`：`{"allowRemoteInstall":true,"allowRemoteUninstall":true}` |
 | 17 | 分发 ClassIsland 档案 | `profileDistribution`，见下 |
 | 18 | 新增或替换时间表 | `timeLayoutUpdate`，见下 |
