@@ -141,7 +141,7 @@ ID,用户名,班级,角色,密码
 | 班主任权限（班级自治） | `GET` 任何登录账号可读；`PUT /api/settings/class-self-service`，请求体 `{"canRename":true,"canChangeAvatar":true,"canPullSchedule":true}`，三项都要填，对全部班级生效；扩展插件设置改为逐个插件开放，见 [control.md](control.md) 的“扩展插件设置” |
 | 服务端状态 | `GET /api/admin/status`，需要“概览”权限 |
 | 系统信息 | `GET /api/admin/system` |
-| 检查更新 | `POST /api/admin/updates/check` |
+| 检查更新 | `POST /api/admin/updates/check`，请求体 `{"channel":"beta"}` 可省略渠道，省略时按 WebUI“系统更新”中保存的渠道；只检查，不下载安装 |
 | 手动上传更新包（调试） | `POST /api/admin/updates/upload`，请求体为当前平台服务端发布包 zip 的原始字节（`Content-Type: application/zip`，上限 512MB）；不校验 SHA-256，允许同版本覆盖和降级，成功返回 `202` 与 `{"version":"…","mode":"…"}` 后服务端自动重启。会替换服务端程序，执行前必须获得用户确认 |
 | 备份 | `GET` 或 `POST /api/admin/backups` 列出或创建；`DELETE /api/admin/backups/{name}` 删除 |
 | 恢复备份 | `POST /api/admin/backups/{name}/restore`，会覆盖当前数据，执行前必须获得用户确认 |
