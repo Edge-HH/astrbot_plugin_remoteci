@@ -121,7 +121,7 @@
 服务端把每次临时调整都记成调课记录：换课申请产生的、班主任在课表页（或手机、手表）直接临时换课产生的，以及老师在 ClassIsland 里直接修改临时层产生的。
 
 - `GET /api/classes/{classId}/schedule-adjustments?from=yyyy-MM-dd`：该班调课记录（默认从今天起）。每项含 `date`、`index`、`fromSubject`、`toSubject`、`teacher`、`origin`（`swap` 换课申请 / `direct` 直接换课 / `classisland` 教室端修改 / `backfill` 升级迁移）、`status`（`active` / `reverted` / `invalidated` / `expired`）、`delivery`（`pending` / `applied` / `conflict`）、`effective`（是否为该节当前生效的那条）、`reason`、`swapRequestId`、`createdByName`。
-- `DELETE /api/schedule-adjustments/{id}`：本班班主任或系统管理员删除一条直接换课或教室端修改产生的调课，教室端随之恢复。来自换课申请的调课要用上面的 `revert` 撤回。删除前先向用户确认。
+- `DELETE /api/schedule-adjustments/{id}`：本班有“直接换课与编辑课表”权限（16）的账号删除一条直接换课或教室端修改产生的调课，教室端随之恢复。来自换课申请的调课要用上面的 `revert` 撤回。删除前先向用户确认。
 
 `GET /api/schedule` 返回的课程里，`adjustmentPending: true` 表示服务端已记录、教室端还没生效的调课；`baseSubjectId` 表示这节课当天被调整过（值为原本的基础科目）。
 
