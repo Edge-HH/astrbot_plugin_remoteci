@@ -86,6 +86,7 @@
 - `enabled`：总开关。
 - `restartAfterExit`、`restartAfterExitDelayMinutes`：退出自启及其延时，0–1440 分钟，0 为立即。“退出 40 分钟后自启”即 `true` 加 `40`。
 - `restartOnCrash`：意外退出时重启。
+- `launchOnStartup`：开机自动启动，默认 `true`。登录 Windows 1 分钟后 ClassIsland 仍未运行时由守护启动；只决定守护是否代为启动，不改动 ClassIsland 自身的开机自启设置。
 - `preventDeletion`：禁止删除。定时备份到教室电脑的 `%LOCALAPPDATA%\RemoteCI\Guard`，被删除后自动恢复、重新启动，并弹窗提示。
 - `backupIntervalHours`：备份间隔，1–168 小时。
 - `organizationName`：只读，是恢复提示“当前ClassIsland由xx统一管理”中的名称，只能在 WebUI“系统配置 › 组织信息”修改。

@@ -9,6 +9,7 @@ from tests.test_operations import NOW, PRIVATE, make
 
 SERVER = "https://rci.example.com"
 POLICY = {"enabled": True, "restartAfterExit": True, "restartAfterExitDelayMinutes": 40, "restartOnCrash": True,
+          "launchOnStartup": False,
           "preventDeletion": False, "backupIntervalHours": 24, "organizationName": "实验中学"}
 EVENTS = [{"credentialId": "d1", "deviceName": "教室电脑", "kind": "restored", "kindName": "已自动恢复",
            "detail": "已恢复 12 个文件并重新启动", "atUnixMs": int(NOW.timestamp() * 1000)}]
@@ -69,6 +70,7 @@ def test_describe_app_guard():
     assert describe_app_guard({"enabled": False}) == "未启用"
     assert describe_app_guard({"enabled": True}) == "已启用（未开启任何守护项）"
     assert describe_app_guard({"enabled": True, "preventDeletion": True, "backupIntervalHours": 6}) == "禁止删除（每 6 小时备份）"
+    assert describe_app_guard({"enabled": True, "restartOnCrash": True, "launchOnStartup": True}) == "意外退出时重启 / 开机自动启动"
 
 
 def test_app_guard_notification_is_ops_alert_with_card_and_hint():

@@ -324,6 +324,8 @@ def describe_app_guard(policy: dict) -> str:
         parts.append(f"退出 {delay} 分钟后自启" if delay > 0 else "退出后立即自启")
     if policy.get("restartOnCrash"):
         parts.append("意外退出时重启")
+    if policy.get("launchOnStartup"):
+        parts.append("开机自动启动")
     if policy.get("preventDeletion"):
         parts.append(f"禁止删除（每 {policy.get('backupIntervalHours') or 24} 小时备份）")
     return " / ".join(parts) or "已启用（未开启任何守护项）"
