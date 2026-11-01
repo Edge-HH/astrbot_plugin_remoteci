@@ -21,7 +21,7 @@
 | 64 | 批量控制（每项操作仍需对应的班级权限） | WebUI 批量控制 |
 | 128 | 自动化（规则以修改人的权限执行） | `/api/automation` |
 | 256 | 应用守护策略 | `/api/settings/app-guard`、`/api/devices/{id}/app-guard` |
-| 512 | 插件批量下发、扩展调用策略与插件的班级开放 | `PUT /api/extensions/{id}`、`PUT /api/extension-groups/{groupId}/class-admin-access` |
+| 512 | 插件控制、扩展调用策略与插件的班级开放 | `PUT /api/extensions/{id}`、`PUT /api/extension-groups/{groupId}/class-admin-access` |
 | 1024 | 登录页与访客 | `/api/visitor` |
 | 2048 | 插件凭据、配对码与课表自动拉取间隔 | `/api/plugin/pairing-code`、`/api/plugins/credentials`、`PUT /api/settings/schedule-pull` |
 | 4096 | 查看全部操作记录 | `GET /api/audit` |
