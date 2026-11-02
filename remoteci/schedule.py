@@ -31,6 +31,8 @@ class Lesson:
     class_id: str = ""
     class_name: str = ""
     teacher: str = ""
+    # 科目地点（机房、实验室等）或自定义课程的地点；在本班教室上课时为空。只用于显示，不参与课表变动比对。
+    location: str = ""
     # 服务端按班级档案推算（该班插件从未同步过课表），可能与教室端实际课表不同。
     estimated: bool = False
     personal_course_id: str = ""
@@ -97,6 +99,7 @@ def lessons_from_class_schedule(bundle: dict, class_id: str = "", class_name: st
                 class_id=class_id or str(bundle.get("classId") or ""),
                 class_name=class_name,
                 teacher=c.get("teacher") or "",
+                location=c.get("location") or "",
                 estimated=bundle.get("source") == SOURCE_PROFILE,
             )
             for c in day.get("courses") or []
@@ -125,6 +128,7 @@ def lessons_from_my_schedule(response: dict) -> dict[str, list[Lesson]]:
                     class_id=("personal:" + str(c["personalCourseId"])) if c.get("personalCourseId") else str(item.get("classId") or ""),
                     class_name=item.get("className") or "",
                     teacher=c.get("teacher") or "",
+                    location=c.get("location") or "",
                     estimated=item.get("source") == SOURCE_PROFILE,
                     personal_course_id=str(c.get("personalCourseId") or ""),
                 ))
@@ -158,6 +162,9 @@ def format_lessons(lessons: list[Lesson], *, show_class: bool, show_teacher: boo
         if show_class and lesson.class_name:
             parts.append(lesson.class_name)
         parts.append(lesson.subject or "（未命名）")
+        # 自定义课程的班级名就是它的地点，不重复显示。
+        if lesson.location and lesson.location != lesson.class_name:
+            parts.append(f"@{lesson.location}")
         if show_teacher and lesson.teacher:
             parts.append(f"（{lesson.teacher}）")
         lines.append("· " + " ".join(parts))

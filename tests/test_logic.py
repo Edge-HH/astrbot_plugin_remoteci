@@ -111,3 +111,21 @@ def test_holiday_calendar_official_makeup_custom_and_weekend(tmp_path):
     assert cal.check(date(2026, 10, 9), settings)[0] is False
     upcoming = cal.upcoming(date(2026, 9, 30), settings)
     assert upcoming[0] == {"name": "国庆节", "start": "2026-10-01", "end": "2026-10-02", "off": True, "source": "official"}
+
+
+def test_format_lessons_appends_subject_location_but_keeps_it_out_of_snapshots():
+    bundle = {"classId": "c1", "days": [{"date": "2026-10-09", "courses": [
+        {"index": 0, "label": "第1节", "subject": "信息", "startTime": "08:00", "endTime": "08:40", "location": "机房"},
+        {"index": 1, "label": "第2节", "subject": "语文", "startTime": "08:50", "endTime": "09:30"},
+    ]}]}
+    lessons = sch.lessons_from_class_schedule(bundle, class_name="高一1班")["2026-10-09"]
+    text = sch.format_lessons(lessons, show_class=False)
+    assert "信息 @机房" in text
+    assert "语文 @" not in text
+    personal = sch.lessons_from_my_schedule({"days": [{"date": "2026-10-09", "items": [{"source": "personal", "className": "报告厅", "courses": [
+        {"index": 0, "label": "自定义", "subject": "教研会", "startTime": "19:00", "endTime": "20:00", "location": "报告厅", "personalCourseId": "p1"},
+    ]}]}]})["2026-10-09"]
+    assert "@报告厅" not in sch.format_lessons(personal, show_class=True)
+    moved = dict(bundle["days"][0]["courses"][0], location="实验室")
+    changed = sch.lessons_from_class_schedule({"classId": "c1", "days": [{"date": "2026-10-09", "courses": [moved, bundle["days"][0]["courses"][1]]}]})
+    assert sch.diff_snapshots(sch.to_snapshot({"2026-10-09": lessons}), sch.to_snapshot(changed), "2026-10-09") == []
